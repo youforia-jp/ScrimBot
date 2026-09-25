@@ -1,0 +1,8 @@
+# Sample collegiate opponent roster inputs
+# Can be raw Steam32 IDs, Steam64 URLs, or Statlocker URLs
+https://statlocker.gg/profile/105829141
+89410294
+https://steamcommunity.com/profiles/76561198080754838
+[U:1:145920391]
+https://tracklock.gg/players/77489201
+99381023

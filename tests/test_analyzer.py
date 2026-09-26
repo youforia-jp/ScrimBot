@@ -4,6 +4,7 @@ import math
 import pytest
 from analyzer import (
     analyze_player,
+    calculate_ranked_characters,
     calculate_team_target_bans,
     calculate_threat_score,
     rank_number_to_name,
@@ -121,16 +122,54 @@ def test_team_target_ban_aggregation() -> None:
     bans = calculate_team_target_bans([p1, p2, p3], top_n=3)
     assert len(bans) == 3
 
-    # Seven total threat = 25.0 + 15.0 = 40.0
-    # Yamato total threat = 30.0
-    # Vindicta total threat = 18.0
-    assert bans[0].hero_name == "Seven"
-    assert bans[0].total_threat_score == 40.0
-    assert bans[1].hero_name == "Yamato"
-    assert bans[1].total_threat_score == 30.0
+    # Threat scores are NOT accumulated across players:
+    # Yamato peak individual threat = 30.0 (P2)
+    # Seven peak individual threat = 25.0 (P1)
+    # Vindicta peak individual threat = 18.0 (P3)
+    assert bans[0].hero_name == "Yamato"
+    assert bans[0].total_threat_score == 30.0
+    assert bans[1].hero_name == "Seven"
+    assert bans[1].total_threat_score == 25.0
     assert bans[2].hero_name == "Vindicta"
     assert bans[2].total_threat_score == 18.0
 
-    # Ensure primary hazards contain player names
-    assert any("P1" in th for th in bans[0].primary_threats)
-    assert any("P2" in th for th in bans[0].primary_threats)
+
+def test_calculate_all_ranked_characters() -> None:
+    p1 = PlayerProfile(
+        account_id=101,
+        personaname="P1",
+        pp_score=6000,
+        heroes=[
+            HeroStatsRecord(account_id=101, hero_id=2, hero_name="Seven", matches_played=50, wins=35, win_rate=0.7, threat_score=25.0, kills=450, deaths=200, assists=500),
+            HeroStatsRecord(account_id=101, hero_id=13, hero_name="Haze", matches_played=20, wins=13, win_rate=0.65, threat_score=10.0, kills=160, deaths=80, assists=180),
+        ],
+    )
+    p2 = PlayerProfile(
+        account_id=102,
+        personaname="P2",
+        pp_score=6000,
+        heroes=[
+            HeroStatsRecord(account_id=102, hero_id=27, hero_name="Yamato", matches_played=60, wins=42, win_rate=0.7, threat_score=30.0, kills=600, deaths=240, assists=480),
+            HeroStatsRecord(account_id=102, hero_id=1, hero_name="Infernus", matches_played=15, wins=9, win_rate=0.6, threat_score=8.0, kills=120, deaths=75, assists=150),
+        ],
+    )
+
+    ranked_all = calculate_ranked_characters([p1, p2])
+    # ALL 4 heroes played across the roster must be present and ranked:
+    assert len(ranked_all) == 4
+    assert ranked_all[0].hero_name == "Yamato"
+    assert ranked_all[0].threat_score == 30.0
+    assert ranked_all[0].rank == 1
+    assert "4.50" in ranked_all[0].kda_display  # (600+480)/240 = 4.5
+
+    assert ranked_all[1].hero_name == "Seven"
+    assert ranked_all[1].threat_score == 25.0
+    assert ranked_all[1].rank == 2
+
+    assert ranked_all[2].hero_name == "Haze"
+    assert ranked_all[2].threat_score == 10.0
+    assert ranked_all[2].rank == 3
+
+    assert ranked_all[3].hero_name == "Infernus"
+    assert ranked_all[3].threat_score == 8.0
+    assert ranked_all[3].rank == 4

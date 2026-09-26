@@ -91,6 +91,9 @@ def generate_mock_roster() -> list[PlayerProfile]:
             m = h["matches"]
             w = h["wins"]
             wr = w / m if m > 0 else 0.0
+            k = h.get("kills", int(m * (8.5 if wr > 0.6 else 6.2)))
+            d = h.get("deaths", int(m * (3.8 if wr > 0.6 else 5.4)))
+            a = h.get("assists", int(m * (9.4 if wr > 0.6 else 7.0)))
             hero_records.append(
                 HeroStatsRecord(
                     account_id=data["account_id"],
@@ -99,6 +102,9 @@ def generate_mock_roster() -> list[PlayerProfile]:
                     matches_played=m,
                     wins=w,
                     win_rate=wr,
+                    kills=k,
+                    deaths=d,
+                    assists=a,
                 )
             )
 

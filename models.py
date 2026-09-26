@@ -16,11 +16,43 @@ class HeroStatsRecord(BaseModel):
     wins: int = 0
     win_rate: float = 0.0
     threat_score: float = 0.0
+    kills: int = 0
+    deaths: int = 0
+    assists: int = 0
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def losses(self) -> int:
         return max(0, self.matches_played - self.wins)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def avg_kills(self) -> float:
+        return (self.kills / self.matches_played) if self.matches_played > 0 else 0.0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def avg_deaths(self) -> float:
+        return (self.deaths / self.matches_played) if self.matches_played > 0 else 0.0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def avg_assists(self) -> float:
+        return (self.assists / self.matches_played) if self.matches_played > 0 else 0.0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def kda_ratio(self) -> float:
+        if self.matches_played == 0:
+            return 0.0
+        return (self.kills + self.assists) / max(1, self.deaths)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def kda_display(self) -> str:
+        if self.matches_played == 0:
+            return "0.0/0.0/0.0 (0.00)"
+        return f"{self.avg_kills:.1f}/{self.avg_deaths:.1f}/{self.avg_assists:.1f} ({self.kda_ratio:.2f})"
 
 
 class PlayerProfile(BaseModel):
@@ -44,13 +76,36 @@ class PlayerProfile(BaseModel):
         return self.personaname if self.personaname else f"Player {self.account_id}"
 
 
+class RankedCharacterThreat(BaseModel):
+    """
+    Ranked character entry showing the individual threat score of the primary opponent pilot.
+    Scores are strictly NOT accumulated across players.
+    """
+
+    rank: int = 1
+    hero_id: int
+    hero_name: str
+    primary_player_name: str
+    primary_account_id: int
+    threat_score: float  # Individual threat score of primary pilot
+    matches_played: int
+    wins: int
+    win_rate: float
+    kills: int = 0
+    deaths: int = 0
+    assists: int = 0
+    kda_display: str = ""
+    # Other players who also play this hero, with their own individual threat scores
+    secondary_pilots: list[str] = Field(default_factory=list)
+
+
 class TeamBanTarget(BaseModel):
-    """A target-ban priority hero aggregated across opponent roster."""
+    """A target-ban priority hero (kept for backwards compatibility)."""
 
     hero_id: int
     hero_name: str
     total_threat_score: float
-    primary_threats: list[str] = Field(default_factory=list)  # e.g., ["JohnDoe (Threat 14.2)", "Sniper (Threat 9.1)"]
+    primary_threats: list[str] = Field(default_factory=list)
     total_matches: int = 0
     total_wins: int = 0
 
@@ -76,6 +131,7 @@ class ExecutiveScoutingReport(BaseModel):
     team_name: str
     created_at: datetime = Field(default_factory=datetime.now)
     opponents: list[PlayerProfile] = Field(default_factory=list)
+    ranked_characters: list[RankedCharacterThreat] = Field(default_factory=list)
     target_bans: list[TeamBanTarget] = Field(default_factory=list)
     draft_lobby: DraftLobbyResponse | None = None
     statlocker_connected: bool = False

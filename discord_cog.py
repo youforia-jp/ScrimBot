@@ -46,21 +46,36 @@ class DeadlockScoutCog(commands.Cog):
             color=discord.Color.red() if any(o.is_one_trick for o in report.opponents) else discord.Color.blue(),
         )
 
-        # Target Bans Section
-        ban_emojis = ["🥇", "🥈", "🥉"]
-        ban_lines = []
-        for idx, ban in enumerate(report.target_bans):
-            emoji = ban_emojis[idx] if idx < len(ban_emojis) else f"#{idx+1}"
-            threats_summary = ", ".join(ban.primary_threats[:2]) if ban.primary_threats else "Broad comfort"
-            ban_lines.append(
-                f"{emoji} **{ban.hero_name}** — Threat: `{ban.total_threat_score:.1f}`\n"
-                f"   *Primary Hazards:* {threats_summary}"
+        # Ranked Character Threats Section (All characters, individual pilot scores)
+        ranked_chars = report.ranked_characters
+        if not ranked_chars:
+            embed.add_field(
+                name="📊 Ranked Character Threat List",
+                value="No opponent hero matches recorded.",
+                inline=False,
             )
-        embed.add_field(
-            name="🚫 Priority Target Bans",
-            value="\n".join(ban_lines) if ban_lines else "No high-threat heroes detected.",
-            inline=False,
-        )
+        else:
+            lines = []
+            for item in ranked_chars:
+                rank_badge = "🥇" if item.rank == 1 else "🥈" if item.rank == 2 else "🥉" if item.rank == 3 else f"`#{item.rank}`"
+                line = (
+                    f"{rank_badge} **{item.hero_name}** — Threat: `{item.threat_score:.1f}`\n"
+                    f"   👤 **{item.primary_player_name}** | {item.win_rate*100:.0f}% WR ({item.matches_played}G) | KDA: `{item.kda_display}`"
+                )
+                if item.secondary_pilots:
+                    line += f"\n   ↳ *Alt Pilot:* {item.secondary_pilots[0]}"
+                lines.append(line)
+
+            # Chunk into fields to respect Discord's 1024-character per field limit
+            chunk_size = 6
+            for chunk_idx in range(0, len(lines), chunk_size):
+                chunk = lines[chunk_idx : chunk_idx + chunk_size]
+                field_title = "📊 Ranked Character Threat List (Individual Pilot Scores)" if chunk_idx == 0 else f"📊 Ranked Characters (Cont. #{chunk_idx + 1}-{chunk_idx + len(chunk)})"
+                embed.add_field(
+                    name=field_title,
+                    value="\n".join(chunk),
+                    inline=False,
+                )
 
         # Draft Room Link
         if report.draft_lobby and report.draft_lobby.success and report.draft_lobby.draft_url:
@@ -79,8 +94,8 @@ class DeadlockScoutCog(commands.Cog):
         for opp in report.opponents:
             comfort_str = "None recorded"
             if opp.comfort_heroes:
-                comfort_str = " | ".join(
-                    f"**{h.hero_name}** ({h.win_rate*100:.0f}% WR, {h.matches_played}G)"
+                comfort_str = "\n".join(
+                    f"• **{h.hero_name}**: {h.win_rate*100:.0f}% WR ({h.matches_played}G) | KDA: `{h.kda_display}`"
                     for h in opp.comfort_heroes
                 )
 
@@ -90,7 +105,7 @@ class DeadlockScoutCog(commands.Cog):
 
             roster_embed.add_field(
                 name=f"{opp.display_name} ({opp.rank_name})",
-                value=f"**PP:** {opp.pp_score:,}\n**Comforts:** {comfort_str}{hazard_note}",
+                value=f"**PP:** {opp.pp_score:,}\n{comfort_str}{hazard_note}",
                 inline=True,
             )
 

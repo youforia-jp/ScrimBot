@@ -8,7 +8,7 @@ from config import settings
 from id_parser import parse_opponent_roster
 from models import DraftLobbyResponse, ExecutiveScoutingReport, PlayerProfile
 from api_client import DeadlockClient, StatlockerClient
-from analyzer import analyze_player, calculate_team_target_bans
+from analyzer import analyze_player, calculate_ranked_characters, calculate_team_target_bans
 from mock_data import generate_mock_roster
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ async def run_scouting(
     """
     if mock_mode:
         roster = generate_mock_roster()
+        ranked_characters = calculate_ranked_characters(roster)
         target_bans = calculate_team_target_bans(roster, top_n=3)
         draft_response = None
         if create_draft:
@@ -50,6 +51,7 @@ async def run_scouting(
         return ExecutiveScoutingReport(
             team_name=team_name,
             opponents=roster,
+            ranked_characters=ranked_characters,
             target_bans=target_bans,
             draft_lobby=draft_response,
             statlocker_connected=True,
@@ -92,7 +94,8 @@ async def run_scouting(
         )
         roster.append(profile)
 
-    # 4. Compute Cumulative Team Target Bans
+    # 4. Compute Ranked Characters and Target Bans (un-accumulated)
+    ranked_characters = calculate_ranked_characters(roster)
     target_bans = calculate_team_target_bans(roster, top_n=3)
 
     # 5. Optionally create draft lobby
@@ -106,6 +109,7 @@ async def run_scouting(
     return ExecutiveScoutingReport(
         team_name=team_name,
         opponents=roster,
+        ranked_characters=ranked_characters,
         target_bans=target_bans,
         draft_lobby=draft_response,
         statlocker_connected=s_client.connected,

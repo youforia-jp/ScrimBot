@@ -55,34 +55,50 @@ def render_report(report: ExecutiveScoutingReport) -> None:
 
     console.print(Panel(header_text, border_style="cyan", box=box.ROUNDED, expand=False))
 
-    # 2. Target Bans Priority
-    ban_emojis = ["[BAN 1]", "[BAN 2]", "[BAN 3]"]
-    ban_table = Table(
-        title="[TARGET BANS] TOP PRIORITY PICKS",
+    # 2. All Ranked Characters (Un-accumulated Threat)
+    ranked_table = Table(
+        title="[ALL HEROES] RANKED CHARACTER THREAT LIST (INDIVIDUAL PILOT SCORES)",
         title_style="bold red",
         header_style="bold magenta",
         box=box.HEAVY_EDGE,
         expand=True,
     )
-    ban_table.add_column("Priority", style="bold yellow", width=12, justify="center")
-    ban_table.add_column("Hero Target", style="bold red", width=16)
-    ban_table.add_column("Cumulative Threat", style="bold cyan", width=18, justify="right")
-    ban_table.add_column("Primary Hazard Players (WR% / Volume / Threat)", style="white")
+    ranked_table.add_column("Rank", style="bold yellow", width=10, justify="center")
+    ranked_table.add_column("Character", style="bold white", width=14)
+    ranked_table.add_column("Threat", style="bold cyan", width=10, justify="right")
+    ranked_table.add_column("Primary Pilot", style="bold green", width=18)
+    ranked_table.add_column("Record", style="white", width=16)
+    ranked_table.add_column("Pilot KDA", style="bold yellow", width=22)
+    ranked_table.add_column("Secondary Pilots (Un-accumulated)", style="dim white")
 
-    if not report.target_bans:
-        ban_table.add_row("-", "No High-Threat Heroes Found", "0.0", "Opponent players have insufficient games recorded (< 5)")
+    characters_to_show = report.ranked_characters
+    if not characters_to_show:
+        ranked_table.add_row("-", "No Heroes Recorded", "0.0", "-", "-", "-", "Opponents have no recorded matches")
     else:
-        for idx, ban in enumerate(report.target_bans):
-            priority_label = ban_emojis[idx] if idx < len(ban_emojis) else f"BAN {idx + 1}"
-            primary_threats_str = "\n".join(ban.primary_threats) if ban.primary_threats else "Broad team pick"
-            ban_table.add_row(
-                priority_label,
-                f"[bold white on red] {ban.hero_name} [/bold white on red]",
-                f"[bold]{ban.total_threat_score:.1f}[/bold]",
-                primary_threats_str,
+        for item in characters_to_show:
+            if item.rank == 1:
+                rank_label = "[bold red]#1 BAN[/bold red]"
+            elif item.rank == 2:
+                rank_label = "[bold yellow]#2 BAN[/bold yellow]"
+            elif item.rank == 3:
+                rank_label = "[bold green]#3 BAN[/bold green]"
+            else:
+                rank_label = f"#{item.rank}"
+
+            secondary_str = "\n".join(item.secondary_pilots) if item.secondary_pilots else "-"
+            record_str = f"{item.win_rate*100:.0f}% WR ({item.matches_played}G)"
+
+            ranked_table.add_row(
+                rank_label,
+                f"[bold white on red] {item.hero_name} [/bold white on red]" if item.threat_score >= 30.0 else item.hero_name,
+                f"[bold]{item.threat_score:.1f}[/bold]",
+                item.primary_player_name,
+                record_str,
+                item.kda_display,
+                secondary_str,
             )
 
-    console.print(ban_table)
+    console.print(ranked_table)
     console.print()
 
     # 3. Opponent Breakdown Table

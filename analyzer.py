@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Sequence
 from config import settings
-from models import HeroStatsRecord, PlayerProfile, TeamBanTarget
+from models import HeroStatsRecord, PlayerProfile, RankedCharacterThreat, TeamBanTarget
 
 # Deadlock Rank Tier Mappings
 DEADLOCK_RANK_NAMES: dict[int, str] = {
@@ -173,62 +173,91 @@ def analyze_player(
     )
 
 
+def calculate_ranked_characters(
+    roster: Sequence[PlayerProfile],
+) -> list[RankedCharacterThreat]:
+    """
+    Rank ALL characters played across the opponent roster by individual threat score.
+
+    IMPORTANT: Threat scores are strictly NOT accumulated across players.
+    Each character is represented by its primary opponent pilot with their individual
+    threat score, win rate, match volume, and KDA statistics.
+    Other pilots on the roster who also play that hero are listed with their own separate threat.
+    """
+    hero_pilots: dict[int, list[tuple[PlayerProfile, HeroStatsRecord]]] = {}
+
+    for player in roster:
+        for hero in player.heroes:
+            if hero.matches_played == 0:
+                continue
+            if hero.hero_id not in hero_pilots:
+                hero_pilots[hero.hero_id] = []
+            hero_pilots[hero.hero_id].append((player, hero))
+
+    ranked_list: list[RankedCharacterThreat] = []
+    for hero_id, pilots in hero_pilots.items():
+        # Sort pilots by individual threat score descending, then by matches played
+        pilots.sort(key=lambda item: (item[1].threat_score, item[1].matches_played), reverse=True)
+        primary_player, primary_hero = pilots[0]
+
+        # Secondary pilots formatted with individual threat and stats (NOT summed)
+        secondary_pilots_str = [
+            f"{p.display_name} (Threat: {h.threat_score:.1f} | {h.win_rate*100:.0f}% WR in {h.matches_played}G | KDA: {h.kda_display})"
+            for p, h in pilots[1:]
+        ]
+
+        ranked_list.append(
+            RankedCharacterThreat(
+                hero_id=hero_id,
+                hero_name=primary_hero.hero_name,
+                primary_player_name=primary_player.display_name,
+                primary_account_id=primary_player.account_id,
+                threat_score=round(primary_hero.threat_score, 1),
+                matches_played=primary_hero.matches_played,
+                wins=primary_hero.wins,
+                win_rate=primary_hero.win_rate,
+                kills=primary_hero.kills,
+                deaths=primary_hero.deaths,
+                assists=primary_hero.assists,
+                kda_display=primary_hero.kda_display,
+                secondary_pilots=secondary_pilots_str,
+            )
+        )
+
+    # Sort ALL characters by individual threat score descending, then by matches
+    ranked_list.sort(key=lambda x: (x.threat_score, x.matches_played), reverse=True)
+
+    # Assign 1-indexed ranks
+    for idx, item in enumerate(ranked_list, start=1):
+        item.rank = idx
+
+    return ranked_list
+
+
 def calculate_team_target_bans(
     roster: Sequence[PlayerProfile], top_n: int = 3
 ) -> list[TeamBanTarget]:
     """
-    Aggregate hero threat scores across all 6 players on the opponent roster.
-    
-    Generates a cumulative "Team Ban Priority" top list, with primary hazard players annotated.
+    Get top target bans based on individual peak threat scores (NOT accumulated across players).
     """
-    # Map hero_id -> aggregate stats
-    hero_aggregates: dict[int, dict] = {}
-
-    for player in roster:
-        player_name = player.display_name
-        for hero in player.heroes:
-            if hero.matches_played < settings.min_matches_played:
-                continue
-
-            if hero.hero_id not in hero_aggregates:
-                hero_aggregates[hero.hero_id] = {
-                    "hero_id": hero.hero_id,
-                    "hero_name": hero.hero_name,
-                    "total_threat_score": 0.0,
-                    "player_threats": [],
-                    "total_matches": 0,
-                    "total_wins": 0,
-                }
-
-            agg = hero_aggregates[hero.hero_id]
-            agg["total_threat_score"] += hero.threat_score
-            agg["total_matches"] += hero.matches_played
-            agg["total_wins"] += hero.wins
-            if hero.threat_score > 0.0:
-                agg["player_threats"].append((player_name, hero.threat_score, hero.win_rate, hero.matches_played))
-
-    # Sort heroes by total threat score descending
-    sorted_heroes = sorted(
-        hero_aggregates.values(), key=lambda x: x["total_threat_score"], reverse=True
-    )
-
+    ranked_chars = calculate_ranked_characters(roster)
     results: list[TeamBanTarget] = []
-    for item in sorted_heroes[:top_n]:
-        # Format primary threats on roster sorted by individual threat
-        sorted_threats = sorted(item["player_threats"], key=lambda pt: pt[1], reverse=True)
+
+    for item in ranked_chars[:top_n]:
         primary_threats_formatted = [
-            f"{name} ({wr * 100:.0f}% WR in {games}G | Threat: {th:.1f})"
-            for name, th, wr, games in sorted_threats[:3]
+            f"{item.primary_player_name} ({item.win_rate * 100:.0f}% WR in {item.matches_played}G | Threat: {item.threat_score:.1f} | KDA: {item.kda_display})"
         ]
+        if item.secondary_pilots:
+            primary_threats_formatted.extend(item.secondary_pilots[:2])
 
         results.append(
             TeamBanTarget(
-                hero_id=item["hero_id"],
-                hero_name=item["hero_name"],
-                total_threat_score=round(item["total_threat_score"], 2),
+                hero_id=item.hero_id,
+                hero_name=item.hero_name,
+                total_threat_score=item.threat_score,
                 primary_threats=primary_threats_formatted,
-                total_matches=item["total_matches"],
-                total_wins=item["total_wins"],
+                total_matches=item.matches_played,
+                total_wins=item.wins,
             )
         )
 

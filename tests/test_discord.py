@@ -2,7 +2,7 @@
 
 import pytest
 from mock_data import generate_mock_roster
-from analyzer import calculate_team_target_bans
+from analyzer import calculate_ranked_characters, calculate_team_target_bans
 from models import ExecutiveScoutingReport, DraftLobbyResponse
 from discord_cog import DeadlockScoutCog, HAS_DISCORD
 
@@ -10,6 +10,7 @@ from discord_cog import DeadlockScoutCog, HAS_DISCORD
 @pytest.mark.skipif(not HAS_DISCORD, reason="discord.py is required for this test")
 def test_discord_embed_generation() -> None:
     roster = generate_mock_roster()
+    ranked_chars = calculate_ranked_characters(roster)
     bans = calculate_team_target_bans(roster, top_n=3)
     draft_lobby = DraftLobbyResponse(
         draft_id="lobby-test-1",
@@ -19,6 +20,7 @@ def test_discord_embed_generation() -> None:
     report = ExecutiveScoutingReport(
         team_name="Texas A&M White",
         opponents=roster,
+        ranked_characters=ranked_chars,
         target_bans=bans,
         draft_lobby=draft_lobby,
         statlocker_connected=True,
@@ -30,13 +32,14 @@ def test_discord_embed_generation() -> None:
 
     assert len(embeds) == 2
 
-    # Main Embed (Target Bans)
+    # Main Embed (Ranked Character Threats)
     main_embed = embeds[0]
     assert "Collegiate Deadlock Scouting Report" in main_embed.title
-    ban_field = next((f for f in main_embed.fields if "Priority Target Bans" in f.name), None)
+    ban_field = next((f for f in main_embed.fields if "Ranked Character Threat List" in f.name), None)
     assert ban_field is not None
     assert "Seven" in ban_field.value
     assert "Yamato" in ban_field.value
+    assert "KDA:" in ban_field.value
 
     # Draft link field
     draft_field = next((f for f in main_embed.fields if "Statlocker Draft Room" in f.name), None)

@@ -302,6 +302,9 @@ class DeadlockClient:
                     wins = int(entry.get("wins", 0))
                     win_rate = (wins / matches) if matches > 0 else 0.0
                     hero_name = self.hero_names.get(hero_id, f"Hero #{hero_id}")
+                    kills = int(entry.get("kills", 0))
+                    deaths = int(entry.get("deaths", 0))
+                    assists = int(entry.get("assists", 0))
 
                     records.append(
                         HeroStatsRecord(
@@ -311,6 +314,9 @@ class DeadlockClient:
                             matches_played=matches,
                             wins=wins,
                             win_rate=win_rate,
+                            kills=kills,
+                            deaths=deaths,
+                            assists=assists,
                         )
                     )
                 return records

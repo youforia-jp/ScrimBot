@@ -55,3 +55,53 @@ def test_discord_embed_generation() -> None:
     aggie_field = next((f for f in roster_embed.fields if "AggieHunter" in f.name), None)
     assert aggie_field is not None
     assert "ONE-TRICK" in aggie_field.value
+
+
+@pytest.mark.skipif(not HAS_DISCORD, reason="discord.py is required for this test")
+def test_discord_embed_field_length_strict_under_1024() -> None:
+    """Verify that every field value is strictly <= 1024 chars even with a massive hero pool."""
+    from models import RankedCharacterThreat
+
+    # Simulate 50 heroes played by opponents
+    huge_hero_list = []
+    for i in range(1, 51):
+        huge_hero_list.append(
+            RankedCharacterThreat(
+                rank=i,
+                hero_id=i,
+                hero_name=f"HeroNumber{i}",
+                primary_player_name=f"VeryLongOpponentPlayerName_{i}",
+                primary_account_id=100000 + i,
+                threat_score=float(100 - i),
+                matches_played=50 + i,
+                wins=30 + i,
+                win_rate=0.65,
+                kills=350,
+                deaths=150,
+                assists=400,
+                kda_display="7.0/3.0/8.0 (5.00)",
+                secondary_pilots=[
+                    f"AltPlayerAlpha_{i} (Threat: 15.0 | 55% WR in 20G | KDA: 5.0/4.0/6.0)",
+                    f"AltPlayerBeta_{i} (Threat: 8.0 | 50% WR in 12G | KDA: 4.0/5.0/5.0)",
+                ],
+            )
+        )
+
+    roster = generate_mock_roster()
+    report = ExecutiveScoutingReport(
+        team_name="Texas A&M White",
+        opponents=roster,
+        ranked_characters=huge_hero_list,
+        target_bans=[],
+    )
+
+    cog = DeadlockScoutCog(bot=None)
+    embeds = cog.build_report_embeds(report)
+
+    # Check Discord API invariants for all embeds
+    for e_idx, embed in enumerate(embeds):
+        assert len(embed.fields) <= 25, f"Embed #{e_idx} has {len(embed.fields)} fields (limit 25)"
+        for f_idx, field in enumerate(embed.fields):
+            assert len(field.name) <= 256, f"Field #{f_idx} in Embed #{e_idx} name > 256 chars"
+            assert len(field.value) <= 1024, f"Field #{f_idx} ('{field.name}') in Embed #{e_idx} value length {len(field.value)} > 1024 chars!"
+            assert len(field.value) > 0, "Field value cannot be empty"

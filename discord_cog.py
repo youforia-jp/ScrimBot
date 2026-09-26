@@ -46,6 +46,8 @@ class DeadlockScoutCog(commands.Cog):
             color=discord.Color.red() if any(o.is_one_trick for o in report.opponents) else discord.Color.blue(),
         )
 
+        embeds: list[discord.Embed] = [embed]
+
         # Ranked Character Threats Section (All characters, individual pilot scores)
         ranked_chars = report.ranked_characters
         if not ranked_chars:
@@ -59,27 +61,59 @@ class DeadlockScoutCog(commands.Cog):
             for item in ranked_chars:
                 rank_badge = "🥇" if item.rank == 1 else "🥈" if item.rank == 2 else "🥉" if item.rank == 3 else f"`#{item.rank}`"
                 line = (
-                    f"{rank_badge} **{item.hero_name}** — Threat: `{item.threat_score:.1f}`\n"
-                    f"   👤 **{item.primary_player_name}** | {item.win_rate*100:.0f}% WR ({item.matches_played}G) | KDA: `{item.kda_display}`"
+                    f"{rank_badge} **{item.hero_name}** (`{item.threat_score:.1f}` Thr) — "
+                    f"**{item.primary_player_name}** ({item.win_rate*100:.0f}% WR, {item.matches_played}G | KDA: `{item.kda_display}`)"
                 )
                 if item.secondary_pilots:
-                    line += f"\n   ↳ *Alt Pilot:* {item.secondary_pilots[0]}"
+                    alt_info = item.secondary_pilots[0]
+                    if len(alt_info) > 100:
+                        alt_info = alt_info[:97] + "..."
+                    line += f"\n   ↳ *Alt:* {alt_info}"
                 lines.append(line)
 
-            # Chunk into fields to respect Discord's 1024-character per field limit
-            chunk_size = 6
-            for chunk_idx in range(0, len(lines), chunk_size):
-                chunk = lines[chunk_idx : chunk_idx + chunk_size]
-                field_title = "📊 Ranked Character Threat List (Individual Pilot Scores)" if chunk_idx == 0 else f"📊 Ranked Characters (Cont. #{chunk_idx + 1}-{chunk_idx + len(chunk)})"
-                embed.add_field(
+            # Dynamically group lines into fields strictly <= 900 characters (Discord limit: 1024)
+            field_chunks: list[str] = []
+            current_chunk: list[str] = []
+            current_len = 0
+
+            for l in lines:
+                l_len = len(l)
+                if current_chunk and (current_len + l_len + 1 > 900):
+                    field_chunks.append("\n".join(current_chunk))
+                    current_chunk = [l]
+                    current_len = l_len
+                else:
+                    current_chunk.append(l)
+                    current_len += l_len + 1
+
+            if current_chunk:
+                field_chunks.append("\n".join(current_chunk))
+
+            # Add fields safely across embeds (max 12 fields per embed to prevent 6000-char total limits)
+            for idx, chunk_text in enumerate(field_chunks):
+                field_title = (
+                    "📊 Ranked Character Threat List (Individual Pilot Scores)"
+                    if idx == 0
+                    else f"📊 Ranked Characters (Cont. Part {idx + 1})"
+                )
+                target_embed = embeds[-1]
+                if len(target_embed.fields) >= 12:
+                    new_embed = discord.Embed(
+                        title="📊 Ranked Character Threat List (Continued)",
+                        color=embed.color,
+                    )
+                    embeds.append(new_embed)
+                    target_embed = new_embed
+
+                target_embed.add_field(
                     name=field_title,
-                    value="\n".join(chunk),
+                    value=chunk_text[:1024],
                     inline=False,
                 )
 
         # Draft Room Link
         if report.draft_lobby and report.draft_lobby.success and report.draft_lobby.draft_url:
-            embed.add_field(
+            embeds[-1].add_field(
                 name="🎮 Statlocker Draft Room",
                 value=f"[**Click to Enter Draft Lobby**]({report.draft_lobby.draft_url})",
                 inline=False,
@@ -96,20 +130,22 @@ class DeadlockScoutCog(commands.Cog):
             if opp.comfort_heroes:
                 comfort_str = "\n".join(
                     f"• **{h.hero_name}**: {h.win_rate*100:.0f}% WR ({h.matches_played}G) | KDA: `{h.kda_display}`"
-                    for h in opp.comfort_heroes
+                    for h in opp.comfort_heroes[:2]
                 )
 
             hazard_note = ""
             if opp.is_one_trick and opp.one_trick_hero and opp.one_trick_pct:
                 hazard_note = f"\n⚠️ **ONE-TRICK:** {opp.one_trick_hero} ({opp.one_trick_pct*100:.1f}% of games)"
 
+            field_val = f"**PP:** {opp.pp_score:,}\n{comfort_str}{hazard_note}"
             roster_embed.add_field(
                 name=f"{opp.display_name} ({opp.rank_name})",
-                value=f"**PP:** {opp.pp_score:,}\n{comfort_str}{hazard_note}",
+                value=field_val[:1024],
                 inline=True,
             )
 
-        return [embed, roster_embed]
+        embeds.append(roster_embed)
+        return embeds
 
     if HAS_DISCORD:
         @commands.command(name="scout")

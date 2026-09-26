@@ -83,7 +83,11 @@ class DeadlockScoutCog(commands.Cog):
         # Main Overview Embed
         embed = discord.Embed(
             title="🎯 Collegiate Deadlock Scouting Report",
-            description=f"**Team:** {report.team_name}\n**Scouted at:** {report.created_at.strftime('%Y-%m-%d %H:%M UTC')}",
+            description=(
+                f"**Team:** {report.team_name}\n"
+                f"**Scouted at:** {report.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
+                f"**Window:** {report.sample_window}"
+            ),
             color=discord.Color.red() if any(o.is_one_trick for o in report.opponents) else discord.Color.blue(),
         )
 
@@ -202,8 +206,9 @@ class DeadlockScoutCog(commands.Cog):
             p5: str,
             p6: str,
             create_draft: bool = False,
+            recent_matches: int = 200,
         ) -> None:
-            """Scout a 6-player opponent roster via prefix command: !scout id1 id2 id3 id4 id5 id6 [create_draft]"""
+            """Scout a 6-player opponent roster via prefix command: !scout id1 id2 id3 id4 id5 id6 [create_draft] [recent_matches]"""
             inputs = [p1, p2, p3, p4, p5, p6]
             await ctx.send("🔍 *Scouting Deadlock opponents and calculating target bans...*")
             try:
@@ -211,6 +216,7 @@ class DeadlockScoutCog(commands.Cog):
                     opponent_inputs=inputs,
                     team_name=settings.default_team_name,
                     create_draft=create_draft,
+                    max_recent_matches=recent_matches,
                 )
                 embeds = self.build_report_embeds(report)
                 await self._send_embeds_safely(ctx.send, embeds)
@@ -221,12 +227,14 @@ class DeadlockScoutCog(commands.Cog):
         @app_commands.describe(
             opponents="6 comma- or space-separated Steam32 IDs or Statlocker URLs",
             create_draft="Whether to create a public Statlocker draft room",
+            recent_matches="Max recent games per player (default: 200, 0 for all-time)",
         )
         async def slash_scout(
             self,
             interaction: discord.Interaction,
             opponents: str,
             create_draft: bool = False,
+            recent_matches: int = 200,
         ) -> None:
             """Slash command for Deadlock scouting."""
             raw_inputs = [s.strip() for s in opponents.replace(",", " ").split() if s.strip()]
@@ -243,6 +251,7 @@ class DeadlockScoutCog(commands.Cog):
                     opponent_inputs=raw_inputs,
                     team_name=settings.default_team_name,
                     create_draft=create_draft,
+                    max_recent_matches=recent_matches,
                 )
                 embeds = self.build_report_embeds(report)
                 await self._send_embeds_safely(interaction.followup.send, embeds)

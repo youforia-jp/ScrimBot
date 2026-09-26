@@ -108,3 +108,84 @@ async def test_deadlock_hero_stats_parsing() -> None:
     assert records[0].wins == 35
     assert pytest.approx(records[0].win_rate, rel=1e-3) == 0.7
     assert records[1].hero_name == "Yamato"
+
+
+@pytest.mark.asyncio
+async def test_deadlock_recent_matches_200_cap() -> None:
+    """Verify that match history is capped to the most recent 200 games and aggregates correctly."""
+    client = DeadlockClient()
+
+    # Create 250 match records:
+    # - Matches 0-119 (120 games): Seven (hero 2), 80 wins, 40 losses
+    # - Matches 120-199 (80 games): Yamato (hero 27), 50 wins, 30 losses
+    # - Matches 200-249 (50 games, older): Bebop (hero 15) -> Should be EXCLUDED by 200-game cap!
+    raw_matches = []
+    for idx in range(120):
+        is_win = idx < 80
+        raw_matches.append({
+            "match_id": 1000 + idx,
+            "hero_id": 2,
+            "start_time": 2000000 - idx,
+            "player_team": 0,
+            "match_result": 0 if is_win else 1,
+            "player_kills": 5,
+            "player_deaths": 2,
+            "player_assists": 8,
+        })
+
+    for idx in range(80):
+        is_win = idx < 50
+        raw_matches.append({
+            "match_id": 2000 + idx,
+            "hero_id": 27,
+            "start_time": 1000000 - idx,
+            "player_team": 1,
+            "match_result": 1 if is_win else 0,
+            "player_kills": 6,
+            "player_deaths": 3,
+            "player_assists": 6,
+        })
+
+    for idx in range(50):
+        raw_matches.append({
+            "match_id": 3000 + idx,
+            "hero_id": 15,
+            "start_time": 500000 - idx,
+            "player_team": 0,
+            "match_result": 0,
+            "player_kills": 2,
+            "player_deaths": 5,
+            "player_assists": 4,
+        })
+
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = raw_matches
+
+    mock_client = MagicMock(spec=httpx.AsyncClient)
+    mock_client.get = AsyncMock(return_value=mock_resp)
+
+    records = await client.fetch_player_hero_stats(
+        mock_client, account_id=105829141, max_matches=200
+    )
+
+    records_by_name = {r.hero_name: r for r in records}
+    # Seven and Yamato should be present
+    assert "Seven" in records_by_name
+    assert "Yamato" in records_by_name
+    # Bebop was only played in matches 201-250, so it must be excluded by the 200-game cap!
+    assert "Bebop" not in records_by_name
+
+    seven = records_by_name["Seven"]
+    assert seven.matches_played == 120
+    assert seven.wins == 80
+    assert pytest.approx(seven.win_rate, rel=1e-3) == (80 / 120)
+    assert seven.kills == 120 * 5
+    assert seven.deaths == 120 * 2
+    assert seven.assists == 120 * 8
+
+    yamato = records_by_name["Yamato"]
+    assert yamato.matches_played == 80
+    assert yamato.wins == 50
+    assert pytest.approx(yamato.win_rate, rel=1e-3) == (50 / 80)
+

@@ -53,6 +53,7 @@ class Settings:
     min_matches_played: int = 5
     one_trick_threshold: float = 0.55  # 55% of total games
     win_rate_threat_baseline: float = 0.45
+    max_recent_matches: int = int(os.getenv("MAX_RECENT_MATCHES", "200"))
 
 
 settings = Settings()

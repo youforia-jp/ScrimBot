@@ -136,3 +136,4 @@ class ExecutiveScoutingReport(BaseModel):
     draft_lobby: DraftLobbyResponse | None = None
     statlocker_connected: bool = False
     deadlock_connected: bool = True
+    sample_window: str = "Past 200 Games"

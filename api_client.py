@@ -279,14 +279,89 @@ class DeadlockClient:
         return self.hero_names
 
     async def fetch_player_hero_stats(
-        self, client: httpx.AsyncClient, account_id: int
+        self,
+        client: httpx.AsyncClient,
+        account_id: int,
+        max_matches: int | None = settings.max_recent_matches,
     ) -> list[HeroStatsRecord]:
         """
         Fetch hero statistics for a single player.
 
-        Supports both standard /v1/players/hero-stats?account_ids=...
-        and fallback direct player endpoints.
+        If max_matches is provided and > 0, queries recent match history
+        (/v1/players/{account_id}/match-history), takes the most recent
+        `max_matches` (default 200), and computes recent hero performance, win rates,
+        and KDA stats.
+
+        Falls back gracefully to cumulative /v1/players/hero-stats if match-history
+        is unavailable, empty, or returns an error.
         """
+        if max_matches and max_matches > 0:
+            history_url = f"{settings.deadlock_base_url}/v1/players/{account_id}/match-history"
+            try:
+                response = await client.get(history_url, headers=self._get_headers())
+                if response.status_code == 200:
+                    matches = response.json()
+                    # Check if response contains individual match history records
+                    if (
+                        isinstance(matches, list)
+                        and len(matches) > 0
+                        and any(k in matches[0] for k in ("match_id", "match_result", "start_time"))
+                    ):
+                        recent_matches = matches[:max_matches]
+                        hero_data: dict[int, dict[str, int]] = {}
+                        for m in recent_matches:
+                            h_id = m.get("hero_id")
+                            if h_id is None:
+                                continue
+                            hero_id = int(h_id)
+                            if hero_id not in hero_data:
+                                hero_data[hero_id] = {
+                                    "matches": 0,
+                                    "wins": 0,
+                                    "kills": 0,
+                                    "deaths": 0,
+                                    "assists": 0,
+                                }
+                            p_team = m.get("player_team")
+                            m_result = m.get("match_result")
+                            is_win = (p_team is not None and p_team == m_result) or (
+                                m.get("player_match_outcome") == 1
+                            )
+                            hero_data[hero_id]["matches"] += 1
+                            if is_win:
+                                hero_data[hero_id]["wins"] += 1
+                            hero_data[hero_id]["kills"] += int(m.get("player_kills") or 0)
+                            hero_data[hero_id]["deaths"] += int(m.get("player_deaths") or 0)
+                            hero_data[hero_id]["assists"] += int(m.get("player_assists") or 0)
+
+                        records: list[HeroStatsRecord] = []
+                        for hero_id, data in hero_data.items():
+                            g = data["matches"]
+                            w = data["wins"]
+                            wr = (w / g) if g > 0 else 0.0
+                            hero_name = self.hero_names.get(hero_id, f"Hero #{hero_id}")
+                            records.append(
+                                HeroStatsRecord(
+                                    account_id=account_id,
+                                    hero_id=hero_id,
+                                    hero_name=hero_name,
+                                    matches_played=g,
+                                    wins=w,
+                                    win_rate=wr,
+                                    kills=data["kills"],
+                                    deaths=data["deaths"],
+                                    assists=data["assists"],
+                                )
+                            )
+                        return records
+            except Exception as exc:
+                logger.debug(
+                    "Match-history query failed for account %s (%s). Falling back to cumulative hero stats.",
+                    account_id,
+                    exc,
+                )
+
+        # Fallback or cumulative mode: Query standard hero-stats endpoint
         url = f"{settings.deadlock_hero_stats_endpoint}?account_ids={account_id}"
         try:
             response = await client.get(url, headers=self._get_headers())
@@ -359,17 +434,22 @@ class DeadlockClient:
         return names
 
     async def fetch_all_players_hero_stats(
-        self, account_ids: Sequence[int]
+        self,
+        account_ids: Sequence[int],
+        max_matches: int | None = settings.max_recent_matches,
     ) -> dict[int, list[HeroStatsRecord]]:
         """
-        Fetch hero statistics for all 6 players concurrently.
+        Fetch hero statistics for all players concurrently.
         """
         # First ensure hero assets are fresh
         await self.fetch_hero_assets()
 
         results: dict[int, list[HeroStatsRecord]] = {}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            tasks = [self.fetch_player_hero_stats(client, acc_id) for acc_id in account_ids]
+            tasks = [
+                self.fetch_player_hero_stats(client, acc_id, max_matches=max_matches)
+                for acc_id in account_ids
+            ]
             stats_list = await asyncio.gather(*tasks, return_exceptions=True)
 
             for acc_id, res in zip(account_ids, stats_list):

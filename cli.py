@@ -50,7 +50,10 @@ def render_report(report: ExecutiveScoutingReport) -> None:
 
     header_text = Text()
     header_text.append("COLLEGIATE DEADLOCK COMPETITIVE SCOUTING REPORT\n", style="bold cyan")
-    header_text.append(f"Team: {report.team_name}   |   Timestamp: {report.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n", style="dim")
+    header_text.append(
+        f"Team: {report.team_name}   |   Timestamp: {report.created_at.strftime('%Y-%m-%d %H:%M:%S')}   |   Window: {report.sample_window}\n",
+        style="dim",
+    )
     header_text.append(f"APIs: {statlocker_badge}   {deadlock_badge}")
 
     console.print(Panel(header_text, border_style="cyan", box=box.ROUNDED, expand=False))
@@ -242,6 +245,12 @@ def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
         help="Create a public draft lobby on Statlocker.gg and output link.",
     )
     parser.add_argument(
+        "-r", "--recent-matches",
+        type=int,
+        default=settings.max_recent_matches,
+        help=f"Max recent matches per player to analyze (default: {settings.max_recent_matches}, 0 for all-time).",
+    )
+    parser.add_argument(
         "-m", "--mock",
         action="store_true",
         help="Run in mock mode using realistic collegiate scrim opponent data (offline demo).",
@@ -261,6 +270,7 @@ async def async_main(args: argparse.Namespace) -> int:
             team_name=args.team,
             create_draft=args.create_draft,
             mock_mode=True,
+            max_recent_matches=args.recent_matches,
         )
         render_report(report)
         return 0
@@ -301,6 +311,7 @@ async def async_main(args: argparse.Namespace) -> int:
                 team_name=args.team,
                 create_draft=args.create_draft,
                 mock_mode=False,
+                max_recent_matches=args.recent_matches,
             )
         except Exception as exc:
             console.print(f"[bold red]Scouting Pipeline Error:[/bold red] {exc}")

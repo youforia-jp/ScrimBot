@@ -19,6 +19,7 @@ async def run_scouting(
     team_name: str = settings.default_team_name,
     create_draft: bool = False,
     mock_mode: bool = False,
+    max_recent_matches: int | None = settings.max_recent_matches,
     statlocker_client: StatlockerClient | None = None,
     deadlock_client: DeadlockClient | None = None,
 ) -> ExecutiveScoutingReport:
@@ -30,12 +31,19 @@ async def run_scouting(
         team_name: Collegiate team name.
         create_draft: Whether to create a public Statlocker draft lobby.
         mock_mode: If True, uses realistic collegiate mock data without external network calls.
+        max_recent_matches: Maximum recent games to analyze per player (e.g. 200). None for all.
         statlocker_client: Optional injected StatlockerClient.
         deadlock_client: Optional injected DeadlockClient.
 
     Returns:
         ExecutiveScoutingReport containing target bans, opponent breakdown, and draft link.
     """
+    sample_window = (
+        f"Past {max_recent_matches} Games"
+        if max_recent_matches and max_recent_matches > 0
+        else "All Recorded Games"
+    )
+
     if mock_mode:
         roster = generate_mock_roster()
         ranked_characters = calculate_ranked_characters(roster)
@@ -56,6 +64,7 @@ async def run_scouting(
             draft_lobby=draft_response,
             statlocker_connected=True,
             deadlock_connected=True,
+            sample_window=sample_window,
         )
 
     # 1. Parse Steam32 IDs
@@ -68,7 +77,9 @@ async def run_scouting(
 
     # 2. Concurrently fetch Statlocker ratings, Deadlock hero stats, and Steam persona names
     statlocker_task = s_client.fetch_profiles(account_ids)
-    hero_stats_task = d_client.fetch_all_players_hero_stats(account_ids)
+    hero_stats_task = d_client.fetch_all_players_hero_stats(
+        account_ids, max_matches=max_recent_matches
+    )
     persona_task = d_client.fetch_steam_profiles(account_ids)
 
     import asyncio
@@ -114,4 +125,5 @@ async def run_scouting(
         draft_lobby=draft_response,
         statlocker_connected=s_client.connected,
         deadlock_connected=d_client.connected,
+        sample_window=sample_window,
     )

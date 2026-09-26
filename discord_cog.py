@@ -34,12 +34,53 @@ class DeadlockScoutCog(commands.Cog):
     def __init__(self, bot: any) -> None:
         self.bot = bot
 
+    @staticmethod
+    def get_embed_total_chars(embed: any) -> int:
+        """Calculate total characters in a Discord Embed according to Discord API limits."""
+        total = len(getattr(embed, "title", None) or "") + len(getattr(embed, "description", None) or "")
+        author = getattr(embed, "author", None)
+        if author and getattr(author, "name", None):
+            total += len(author.name)
+        footer = getattr(embed, "footer", None)
+        if footer and getattr(footer, "text", None):
+            total += len(footer.text)
+        for field in getattr(embed, "fields", []):
+            total += len(getattr(field, "name", None) or "") + len(getattr(field, "value", None) or "")
+        return total
+
+    @staticmethod
+    async def _send_embeds_safely(
+        send_func: any,
+        embeds: list[any],
+        max_chars_per_msg: int = 4800,
+    ) -> None:
+        """
+        Send a list of embeds in batches such that no single Discord message
+        exceeds Discord's 6000-character combined embed limit or 10-embed limit.
+        """
+        current_batch: list[any] = []
+        current_batch_chars = 0
+
+        for emb in embeds:
+            emb_chars = DeadlockScoutCog.get_embed_total_chars(emb)
+            # If batching this embed would exceed safe message budget or 10 embeds, dispatch
+            if current_batch and (current_batch_chars + emb_chars > max_chars_per_msg or len(current_batch) >= 10):
+                await send_func(embeds=current_batch)
+                current_batch = [emb]
+                current_batch_chars = emb_chars
+            else:
+                current_batch.append(emb)
+                current_batch_chars += emb_chars
+
+        if current_batch:
+            await send_func(embeds=current_batch)
+
     def build_report_embeds(self, report: ExecutiveScoutingReport) -> list[any]:
-        """Convert ExecutiveScoutingReport into Discord Embeds."""
+        """Convert ExecutiveScoutingReport into Discord Embeds with strict per-embed and per-message size limits."""
         if not HAS_DISCORD:
             raise RuntimeError("discord.py is not installed in the environment.")
 
-        # Main Embed: Target Bans
+        # Main Overview Embed
         embed = discord.Embed(
             title="🎯 Collegiate Deadlock Scouting Report",
             description=f"**Team:** {report.team_name}\n**Scouted at:** {report.created_at.strftime('%Y-%m-%d %H:%M UTC')}",
@@ -47,6 +88,14 @@ class DeadlockScoutCog(commands.Cog):
         )
 
         embeds: list[discord.Embed] = [embed]
+
+        # Draft Room Link
+        if report.draft_lobby and report.draft_lobby.success and report.draft_lobby.draft_url:
+            embed.add_field(
+                name="🎮 Statlocker Draft Room",
+                value=f"[**Click to Enter Draft Lobby**]({report.draft_lobby.draft_url})",
+                inline=False,
+            )
 
         # Ranked Character Threats Section (All characters, individual pilot scores)
         ranked_chars = report.ranked_characters
@@ -66,19 +115,19 @@ class DeadlockScoutCog(commands.Cog):
                 )
                 if item.secondary_pilots:
                     alt_info = item.secondary_pilots[0]
-                    if len(alt_info) > 100:
-                        alt_info = alt_info[:97] + "..."
+                    if len(alt_info) > 80:
+                        alt_info = alt_info[:77] + "..."
                     line += f"\n   ↳ *Alt:* {alt_info}"
                 lines.append(line)
 
-            # Dynamically group lines into fields strictly <= 900 characters (Discord limit: 1024)
+            # Dynamically group lines into fields strictly <= 800 characters (Discord limit: 1024)
             field_chunks: list[str] = []
             current_chunk: list[str] = []
             current_len = 0
 
             for l in lines:
                 l_len = len(l)
-                if current_chunk and (current_len + l_len + 1 > 900):
+                if current_chunk and (current_len + l_len + 1 > 800):
                     field_chunks.append("\n".join(current_chunk))
                     current_chunk = [l]
                     current_len = l_len
@@ -89,7 +138,7 @@ class DeadlockScoutCog(commands.Cog):
             if current_chunk:
                 field_chunks.append("\n".join(current_chunk))
 
-            # Add fields safely across embeds (max 12 fields per embed to prevent 6000-char total limits)
+            # Add fields across embeds (max 3800 chars or 10 fields per embed, Discord limit is 6000)
             for idx, chunk_text in enumerate(field_chunks):
                 field_title = (
                     "📊 Ranked Character Threat List (Individual Pilot Scores)"
@@ -97,9 +146,11 @@ class DeadlockScoutCog(commands.Cog):
                     else f"📊 Ranked Characters (Cont. Part {idx + 1})"
                 )
                 target_embed = embeds[-1]
-                if len(target_embed.fields) >= 12:
+                field_chars = len(field_title) + len(chunk_text)
+
+                if (self.get_embed_total_chars(target_embed) + field_chars > 3800) or len(target_embed.fields) >= 10:
                     new_embed = discord.Embed(
-                        title="📊 Ranked Character Threat List (Continued)",
+                        title=f"📊 Ranked Character Threat List (Cont. Part {len(embeds) + 1})",
                         color=embed.color,
                     )
                     embeds.append(new_embed)
@@ -111,15 +162,7 @@ class DeadlockScoutCog(commands.Cog):
                     inline=False,
                 )
 
-        # Draft Room Link
-        if report.draft_lobby and report.draft_lobby.success and report.draft_lobby.draft_url:
-            embeds[-1].add_field(
-                name="🎮 Statlocker Draft Room",
-                value=f"[**Click to Enter Draft Lobby**]({report.draft_lobby.draft_url})",
-                inline=False,
-            )
-
-        # Roster Breakdown Embed
+        # Roster Breakdown Embed (Clean dedicated embed)
         roster_embed = discord.Embed(
             title="👥 Opponent Roster & Comfort Picks",
             color=discord.Color.dark_grey(),
@@ -170,8 +213,7 @@ class DeadlockScoutCog(commands.Cog):
                     create_draft=create_draft,
                 )
                 embeds = self.build_report_embeds(report)
-                for emb in embeds:
-                    await ctx.send(embed=emb)
+                await self._send_embeds_safely(ctx.send, embeds)
             except Exception as exc:
                 await ctx.send(f"❌ **Scouting error:** {exc}")
 
@@ -203,7 +245,7 @@ class DeadlockScoutCog(commands.Cog):
                     create_draft=create_draft,
                 )
                 embeds = self.build_report_embeds(report)
-                await interaction.followup.send(embeds=embeds)
+                await self._send_embeds_safely(interaction.followup.send, embeds)
             except Exception as exc:
                 await interaction.followup.send(f"❌ **Scouting error:** {exc}")
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 import discord
 from discord.ext import commands
@@ -28,7 +29,10 @@ class DeadlockScoutBot(commands.Bot):
 
     def __init__(self) -> None:
         intents = discord.Intents.default()
-        intents.message_content = True
+        # Only request message_content if explicitly enabled via environment
+        self.message_content_enabled = os.getenv("ENABLE_MESSAGE_CONTENT", "false").lower() in ("true", "1", "yes")
+        if self.message_content_enabled:
+            intents.message_content = True
 
         super().__init__(
             command_prefix="!",
@@ -37,28 +41,35 @@ class DeadlockScoutBot(commands.Bot):
         )
 
     async def setup_hook(self) -> None:
-        """Register cogs and sync slash commands with Discord."""
+        """Register cogs and schedule slash command sync."""
         await self.add_cog(DeadlockScoutCog(self))
         logger.info("Loaded DeadlockScoutCog.")
+        # Sync in background task so gateway connection connects immediately
+        asyncio.create_task(self._sync_tree())
 
-        # Sync slash commands globally
+    async def _sync_tree(self) -> None:
         try:
             synced = await self.tree.sync()
-            logger.info("Synced %d slash commands globally.", len(synced))
+            logger.info("Synced %d slash command(s) with Discord.", len(synced))
         except Exception as exc:
-            logger.error("Failed to sync slash commands: %s", exc)
+            logger.warning("Slash command sync notice: %s", exc)
 
     async def on_ready(self) -> None:
         if self.user:
             logger.info("Logged in as %s (ID: %s)", self.user.name, self.user.id)
             logger.info("Active in %d guild(s).", len(self.guilds))
-            print("\n" + "=" * 60)
-            print(f" Deadlock ScrimBot is ONLINE as @{self.user.name}")
-            print(f" Connected to {len(self.guilds)} Discord server(s)")
-            print(" Commands available in your server:")
-            print("   - Slash Command:  /scout opponents: <ids or urls>")
-            print("   - Prefix Command: !scout <p1> <p2> <p3> <p4> <p5> <p6>")
-            print("=" * 60 + "\n")
+            print("\n" + "=" * 60, flush=True)
+            print(f" Deadlock ScrimBot is ONLINE as @{self.user.name}", flush=True)
+            print(f" Connected to {len(self.guilds)} Discord server(s)", flush=True)
+            print(" Commands available in your server:", flush=True)
+            print("   - Slash Command:  /scout opponents: <ids or urls>", flush=True)
+            if self.message_content_enabled:
+                print("   - Prefix Command: !scout <p1> <p2> <p3> <p4> <p5> <p6>", flush=True)
+            else:
+                print("   - Tip: Slash command (/scout) is active immediately!", flush=True)
+                print("     To also use '!scout', enable 'Message Content Intent' in", flush=True)
+                print("     Discord Developer Portal and add ENABLE_MESSAGE_CONTENT=true to .env.", flush=True)
+            print("=" * 60 + "\n", flush=True)
 
 
 def main() -> None:
@@ -76,6 +87,13 @@ def main() -> None:
     bot = DeadlockScoutBot()
     try:
         bot.run(token)
+    except discord.errors.PrivilegedIntentsRequired:
+        print("\n[ERROR] Privileged Message Content Intent is not enabled in Discord Developer Portal.")
+        print("To fix:")
+        print("  1. Visit https://discord.com/developers/applications")
+        print("  2. Select your application -> 'Bot' tab.")
+        print("  3. Scroll down and enable 'Message Content Intent'.\n")
+        sys.exit(1)
     except discord.errors.LoginFailure:
         print("\n[ERROR] Failed to log in: The provided DISCORD_BOT_TOKEN is invalid.")
         sys.exit(1)

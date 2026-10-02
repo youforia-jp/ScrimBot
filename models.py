@@ -125,6 +125,19 @@ class DraftLobbyResponse(BaseModel):
     message: str = ""
 
 
+class PlayerSearchResult(BaseModel):
+    """Result of resolving a player username to a Statlocker / Steam32 ID."""
+
+    search_query: str
+    account_id: int | None = None
+    personaname: str | None = None
+    profile_url: str | None = None
+    statlocker_url: str | None = None
+    matches_played_last_30d: int | None = None
+    success: bool = False
+    message: str = ""
+
+
 class ExecutiveScoutingReport(BaseModel):
     """Full executive scouting report ready for terminal rendering or Discord embed."""
 
@@ -137,3 +150,4 @@ class ExecutiveScoutingReport(BaseModel):
     statlocker_connected: bool = False
     deadlock_connected: bool = True
     sample_window: str = "Past 200 Games"
+    resolved_players: list[PlayerSearchResult] = Field(default_factory=list)

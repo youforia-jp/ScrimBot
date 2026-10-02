@@ -58,6 +58,36 @@ def render_report(report: ExecutiveScoutingReport) -> None:
 
     console.print(Panel(header_text, border_style="cyan", box=box.ROUNDED, expand=False))
 
+    # 1.5 Resolved Usernames Table (if usernames were searched)
+    if report.resolved_players and any(
+        r.search_query != str(r.account_id) for r in report.resolved_players if r.account_id
+    ):
+        resolve_table = Table(
+            title="[OPPONENT RESOLUTION] STATLOCKER PROFILES RESOLVED FROM USERNAMES",
+            title_style="bold green",
+            header_style="bold cyan",
+            box=box.SIMPLE_HEAVY,
+            expand=False,
+        )
+        resolve_table.add_column("Input Username", style="bold white")
+        resolve_table.add_column("Matched Persona", style="bold yellow")
+        resolve_table.add_column("Steam32 ID", style="bold cyan")
+        resolve_table.add_column("Statlocker Profile", style="blue")
+        resolve_table.add_column("Recent Games (30d)", style="green", justify="right")
+
+        for r in report.resolved_players:
+            if r.success and r.account_id:
+                m30_str = f"{r.matches_played_last_30d}G" if r.matches_played_last_30d is not None else "-"
+                resolve_table.add_row(
+                    r.search_query,
+                    r.personaname or "-",
+                    str(r.account_id),
+                    r.statlocker_url or f"https://statlocker.gg/profile/{r.account_id}",
+                    m30_str,
+                )
+        console.print(resolve_table)
+        console.print()
+
     # 2. All Ranked Characters (Un-accumulated Threat)
     ranked_table = Table(
         title="[ALL HEROES] RANKED CHARACTER THREAT LIST (INDIVIDUAL PILOT SCORES)",
@@ -251,6 +281,11 @@ def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
         help=f"Max recent matches per player to analyze (default: {settings.max_recent_matches}, 0 for all-time).",
     )
     parser.add_argument(
+        "-u", "--usernames",
+        nargs="+",
+        help="Opponent Steam usernames to automatically resolve to Statlocker IDs and scout.",
+    )
+    parser.add_argument(
         "-m", "--mock",
         action="store_true",
         help="Run in mock mode using realistic collegiate scrim opponent data (offline demo).",
@@ -275,7 +310,9 @@ async def async_main(args: argparse.Namespace) -> int:
         render_report(report)
         return 0
 
-    if args.file:
+    if getattr(args, "usernames", None):
+        raw_inputs = args.usernames
+    elif args.file:
         try:
             with open(args.file, "r", encoding="utf-8") as f:
                 raw_inputs = [line.strip() for line in f if line.strip() and not line.startswith("#")]
@@ -297,14 +334,7 @@ async def async_main(args: argparse.Namespace) -> int:
             f"[bold yellow]Notice:[/bold yellow] Received {len(raw_inputs)} opponent inputs. Standard Deadlock team roster is 6 players."
         )
 
-    # Validate and parse IDs
-    try:
-        parsed_ids = parse_opponent_roster(raw_inputs)
-    except ValueError as exc:
-        console.print(f"[bold red]Input Error:[/bold red] {exc}")
-        return 1
-
-    with console.status("[bold green]Scouting opponents and calculating target bans...[/bold green]", spinner="dots"):
+    with console.status("[bold green]Resolving opponents and scouting target bans...[/bold green]", spinner="dots"):
         try:
             report = await run_scouting(
                 opponent_inputs=raw_inputs,

@@ -109,3 +109,24 @@ def parse_opponent_roster(inputs: Sequence[str]) -> list[int]:
             raise ValueError(f"Player #{idx} ('{item_str}'): {exc}") from exc
 
     return parsed_ids
+
+
+def is_direct_id_or_url(input_str: str) -> bool:
+    """
+    Check if input_str is an explicit Steam ID or supported profile URL
+    (as opposed to a raw player username).
+    """
+    cleaned = input_str.strip().strip("'\"")
+    if not cleaned:
+        return False
+    if STATLOCKER_REGEX.search(cleaned):
+        return True
+    if STEAM_PROFILES_REGEX.search(cleaned):
+        return True
+    if STEAM_ID3_REGEX.search(cleaned):
+        return True
+    if TRACKER_REGEX.search(cleaned):
+        return True
+    if cleaned.isdigit() and len(cleaned) >= 6:
+        return True
+    return False

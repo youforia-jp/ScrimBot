@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Sequence
 from config import settings
-from id_parser import parse_opponent_roster
-from models import DraftLobbyResponse, ExecutiveScoutingReport, PlayerProfile
+from id_parser import is_direct_id_or_url, parse_opponent_roster, parse_single_id
+from models import DraftLobbyResponse, ExecutiveScoutingReport, PlayerProfile, PlayerSearchResult
 from api_client import DeadlockClient, StatlockerClient
 from analyzer import analyze_player, calculate_ranked_characters, calculate_team_target_bans
 from mock_data import generate_mock_roster
@@ -67,13 +67,46 @@ async def run_scouting(
             sample_window=sample_window,
         )
 
-    # 1. Parse Steam32 IDs
-    account_ids = parse_opponent_roster(opponent_inputs)
-    if not account_ids:
-        raise ValueError("No valid Steam32 account IDs provided.")
-
     s_client = statlocker_client or StatlockerClient()
     d_client = deadlock_client or DeadlockClient()
+
+    # 1. Parse or resolve opponent inputs to Steam32 account IDs
+    account_ids: list[int] = []
+    resolved_players_meta: list[PlayerSearchResult] = []
+
+    for idx, item in enumerate(opponent_inputs, start=1):
+        item_str = item.strip().strip("'\"")
+        if not item_str:
+            continue
+
+        if is_direct_id_or_url(item_str):
+            try:
+                acc_id = parse_single_id(item_str)
+                account_ids.append(acc_id)
+                resolved_players_meta.append(
+                    PlayerSearchResult(
+                        search_query=item_str,
+                        account_id=acc_id,
+                        statlocker_url=f"https://statlocker.gg/profile/{acc_id}",
+                        success=True,
+                        message="Direct ID/URL parsed successfully.",
+                    )
+                )
+            except ValueError as exc:
+                raise ValueError(f"Player #{idx} ('{item_str}'): {exc}") from exc
+        else:
+            # Resolve username via Deadlock API
+            search_res = await d_client.search_player_by_username(item_str)
+            resolved_players_meta.append(search_res)
+            if search_res.success and search_res.account_id is not None:
+                account_ids.append(search_res.account_id)
+            else:
+                raise ValueError(
+                    f"Could not resolve username #{idx} ('{item_str}') to a Statlocker ID: {search_res.message}"
+                )
+
+    if not account_ids:
+        raise ValueError("No valid Steam32 account IDs or usernames provided.")
 
     # 2. Concurrently fetch Statlocker ratings, Deadlock hero stats, and Steam persona names
     statlocker_task = s_client.fetch_profiles(account_ids)
@@ -126,4 +159,76 @@ async def run_scouting(
         statlocker_connected=s_client.connected,
         deadlock_connected=d_client.connected,
         sample_window=sample_window,
+        resolved_players=resolved_players_meta,
     )
+
+
+async def get_statlocker_ids_by_usernames(
+    usernames: Sequence[str],
+    deadlock_client: DeadlockClient | None = None,
+) -> dict[str, int | None]:
+    """
+    Get Statlocker / Steam32 account IDs based on player usernames alone.
+
+    Args:
+        usernames: Sequence of player usernames / Steam personanames.
+        deadlock_client: Optional injected DeadlockClient.
+
+    Returns:
+        Dictionary mapping input username to its resolved integer Steam32 ID (or None if not found).
+    """
+    client = deadlock_client or DeadlockClient()
+    results = await client.resolve_usernames_to_ids(usernames)
+    return {res.search_query: res.account_id for res in results}
+
+
+async def scout_by_usernames(
+    usernames: Sequence[str],
+    team_name: str = settings.default_team_name,
+    create_draft: bool = False,
+    max_recent_matches: int | None = settings.max_recent_matches,
+    deadlock_client: DeadlockClient | None = None,
+    statlocker_client: StatlockerClient | None = None,
+) -> tuple[ExecutiveScoutingReport, list[PlayerSearchResult]]:
+    """
+    Get Statlocker IDs based on player usernames alone, and then auto-scout the roster.
+
+    Args:
+        usernames: 6 player usernames (e.g. ['GreenGobbler', 'BrickMac', ...]).
+        team_name: Collegiate team name.
+        create_draft: Whether to create a Statlocker draft room.
+        max_recent_matches: Match window (default: 200).
+        deadlock_client: Optional injected DeadlockClient.
+        statlocker_client: Optional injected StatlockerClient.
+
+    Returns:
+        Tuple of (ExecutiveScoutingReport, list[PlayerSearchResult]).
+    """
+    d_client = deadlock_client or DeadlockClient()
+    s_client = statlocker_client or StatlockerClient()
+
+    # 1. Resolve usernames to Statlocker IDs
+    search_results = await d_client.resolve_usernames_to_ids(usernames)
+
+    unresolved = [r for r in search_results if not r.success or r.account_id is None]
+    if unresolved:
+        unresolved_names = ", ".join(f"'{r.search_query}'" for r in unresolved)
+        raise ValueError(
+            f"Failed to resolve {len(unresolved)} player username(s) to Statlocker IDs: {unresolved_names}"
+        )
+
+    resolved_ids = [str(r.account_id) for r in search_results if r.account_id is not None]
+
+    # 2. Automatically run competitive scouting
+    report = await run_scouting(
+        opponent_inputs=resolved_ids,
+        team_name=team_name,
+        create_draft=create_draft,
+        max_recent_matches=max_recent_matches,
+        statlocker_client=s_client,
+        deadlock_client=d_client,
+    )
+    report.resolved_players = search_results
+
+    return report, search_results
+

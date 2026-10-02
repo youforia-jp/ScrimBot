@@ -101,6 +101,19 @@ class DeadlockScoutCog(commands.Cog):
                 inline=False,
             )
 
+        # Resolved Opponent Usernames (if searched by username)
+        resolved_usernames = [
+            f"• `{r.search_query}` ➔ **[{r.personaname or r.search_query}]({r.statlocker_url})** (`{r.account_id}`)"
+            for r in getattr(report, "resolved_players", [])
+            if r.account_id and r.search_query != str(r.account_id)
+        ]
+        if resolved_usernames:
+            embed.add_field(
+                name="🔍 Resolved Statlocker Opponents",
+                value="\n".join(resolved_usernames)[:1024],
+                inline=False,
+            )
+
         # Ranked Character Threats Section (All characters, individual pilot scores)
         ranked_chars = report.ranked_characters
         if not ranked_chars:
@@ -225,7 +238,7 @@ class DeadlockScoutCog(commands.Cog):
 
         @app_commands.command(name="scout", description="Scout 6 Deadlock opponents and calculate ban priorities.")
         @app_commands.describe(
-            opponents="6 comma- or space-separated Steam32 IDs or Statlocker URLs",
+            opponents="6 comma- or space-separated Steam32 IDs, URLs, or player usernames",
             create_draft="Whether to create a public Statlocker draft room",
             recent_matches="Max recent games per player (default: 200, 0 for all-time)",
         )
@@ -236,11 +249,11 @@ class DeadlockScoutCog(commands.Cog):
             create_draft: bool = False,
             recent_matches: int = 200,
         ) -> None:
-            """Slash command for Deadlock scouting."""
+            """Slash command for Deadlock scouting by IDs, URLs, or usernames."""
             raw_inputs = [s.strip() for s in opponents.replace(",", " ").split() if s.strip()]
             if len(raw_inputs) != 6:
                 await interaction.response.send_message(
-                    f"⚠️ Please provide exactly 6 opponent IDs or URLs (received {len(raw_inputs)}).",
+                    f"⚠️ Please provide exactly 6 opponent inputs (received {len(raw_inputs)}).",
                     ephemeral=True,
                 )
                 return
@@ -257,6 +270,72 @@ class DeadlockScoutCog(commands.Cog):
                 await self._send_embeds_safely(interaction.followup.send, embeds)
             except Exception as exc:
                 await interaction.followup.send(f"❌ **Scouting error:** {exc}")
+
+        @app_commands.command(
+            name="scout_usernames",
+            description="Auto-resolve 6 opponent player usernames to Statlocker IDs and scout them.",
+        )
+        @app_commands.describe(
+            usernames="6 comma- or space-separated player usernames (e.g. GreenGobbler, BrickMac, EczeMonk, ...)",
+            create_draft="Whether to create a public Statlocker draft room",
+            recent_matches="Max recent games per player (default: 200, 0 for all-time)",
+        )
+        async def slash_scout_usernames(
+            self,
+            interaction: discord.Interaction,
+            usernames: str,
+            create_draft: bool = False,
+            recent_matches: int = 200,
+        ) -> None:
+            """Slash command for auto-scouting by usernames."""
+            raw_inputs = [s.strip() for s in usernames.replace(",", " ").split() if s.strip()]
+            if len(raw_inputs) != 6:
+                await interaction.response.send_message(
+                    f"⚠️ Please provide exactly 6 opponent usernames (received {len(raw_inputs)}).",
+                    ephemeral=True,
+                )
+                return
+
+            await interaction.response.defer()
+            try:
+                report = await run_scouting(
+                    opponent_inputs=raw_inputs,
+                    team_name=settings.default_team_name,
+                    create_draft=create_draft,
+                    max_recent_matches=recent_matches,
+                )
+                embeds = self.build_report_embeds(report)
+                await self._send_embeds_safely(interaction.followup.send, embeds)
+            except Exception as exc:
+                await interaction.followup.send(f"❌ **Scouting error:** {exc}")
+
+        @commands.command(name="scout_usernames", aliases=["scout_names"])
+        async def prefix_scout_usernames(
+            self,
+            ctx: commands.Context,
+            p1: str,
+            p2: str,
+            p3: str,
+            p4: str,
+            p5: str,
+            p6: str,
+            create_draft: bool = False,
+            recent_matches: int = 200,
+        ) -> None:
+            """Scout a 6-player roster by usernames: !scout_usernames name1 name2 name3 name4 name5 name6"""
+            inputs = [p1, p2, p3, p4, p5, p6]
+            await ctx.send("🔍 *Resolving opponent usernames to Statlocker IDs and scouting...*")
+            try:
+                report = await run_scouting(
+                    opponent_inputs=inputs,
+                    team_name=settings.default_team_name,
+                    create_draft=create_draft,
+                    max_recent_matches=recent_matches,
+                )
+                embeds = self.build_report_embeds(report)
+                await self._send_embeds_safely(ctx.send, embeds)
+            except Exception as exc:
+                await ctx.send(f"❌ **Scouting error:** {exc}")
 
 
 async def setup(bot: any) -> None:

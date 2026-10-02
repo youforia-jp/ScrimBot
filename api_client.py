@@ -8,7 +8,7 @@ from typing import Any, Sequence
 import httpx
 
 from config import settings
-from models import DraftLobbyResponse, HeroStatsRecord
+from models import DraftLobbyResponse, HeroStatsRecord, PlayerSearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -460,3 +460,110 @@ class DeadlockClient:
                     results[acc_id] = res
 
         return results
+
+    async def search_player_by_username(
+        self,
+        username: str,
+        client: httpx.AsyncClient | None = None,
+        min_matches: int = 5,
+    ) -> PlayerSearchResult:
+        """
+        Search for a Deadlock player by Steam personaname using Deadlock API.
+        Resolves to their Steam32 / Statlocker account ID.
+        """
+        cleaned_name = username.strip().strip("'\"")
+        if not cleaned_name:
+            return PlayerSearchResult(
+                search_query=username,
+                success=False,
+                message="Empty username provided.",
+            )
+
+        params: dict[str, Any] = {
+            "search_query": cleaned_name,
+            "limit": 10,
+            "min_matches_played_last_30d": min_matches,
+        }
+
+        async def _do_query(c: httpx.AsyncClient, p: dict[str, Any]) -> list[dict[str, Any]]:
+            resp = await c.get(
+                settings.deadlock_steam_search_endpoint,
+                params=p,
+                headers=self._get_headers(),
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list):
+                    return data
+            return []
+
+        try:
+            results: list[dict[str, Any]] = []
+            if client:
+                results = await _do_query(client, params)
+            else:
+                async with httpx.AsyncClient(timeout=self.timeout) as c:
+                    results = await _do_query(c, params)
+
+            # If no matches found with min_matches > 0, retry once with min_matches=0
+            if not results and min_matches > 0:
+                retry_params = dict(params, min_matches_played_last_30d=0)
+                if client:
+                    results = await _do_query(client, retry_params)
+                else:
+                    async with httpx.AsyncClient(timeout=self.timeout) as c:
+                        results = await _do_query(c, retry_params)
+
+            if not results:
+                return PlayerSearchResult(
+                    search_query=username,
+                    success=False,
+                    message=f"No Deadlock player found matching username '{username}'.",
+                )
+
+            # Look for exact case-insensitive match first
+            exact_matches = [
+                p
+                for p in results
+                if str(p.get("personaname", "")).strip().lower() == cleaned_name.lower()
+            ]
+            if exact_matches:
+                # Prefer the one with highest recent match volume
+                chosen = max(exact_matches, key=lambda x: int(x.get("matches_played_last_30d") or 0))
+            else:
+                chosen = results[0]
+
+            acc_id = int(chosen["account_id"])
+            persona = str(chosen.get("personaname") or cleaned_name)
+            profile_url = chosen.get("profileurl")
+            statlocker_url = f"https://statlocker.gg/profile/{acc_id}"
+            m30 = chosen.get("matches_played_last_30d")
+
+            return PlayerSearchResult(
+                search_query=username,
+                account_id=acc_id,
+                personaname=persona,
+                profile_url=profile_url,
+                statlocker_url=statlocker_url,
+                matches_played_last_30d=m30,
+                success=True,
+                message=f"Resolved '{username}' to Statlocker ID {acc_id} ({persona}).",
+            )
+        except Exception as exc:
+            logger.warning("Error searching player by username '%s': %s", username, exc)
+            return PlayerSearchResult(
+                search_query=username,
+                success=False,
+                message=f"Search failed due to network error: {exc}",
+            )
+
+    async def resolve_usernames_to_ids(
+        self,
+        usernames: Sequence[str],
+    ) -> list[PlayerSearchResult]:
+        """
+        Concurrently resolve a list of player usernames to their Statlocker / Steam32 IDs.
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            tasks = [self.search_player_by_username(name, client=client) for name in usernames]
+            return await asyncio.gather(*tasks)

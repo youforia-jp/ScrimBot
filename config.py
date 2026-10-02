@@ -36,6 +36,9 @@ class Settings:
     deadlock_steam_endpoint: str = os.getenv(
         "DEADLOCK_STEAM_ENDPOINT", "https://api.deadlock-api.com/v1/players/steam"
     )
+    deadlock_steam_search_endpoint: str = os.getenv(
+        "DEADLOCK_STEAM_SEARCH_ENDPOINT", "https://api.deadlock-api.com/v1/players/steam-search"
+    )
 
     # Statlocker Endpoints
     statlocker_base_url: str = os.getenv("STATLOCKER_BASE_URL", "https://statlocker.gg")

@@ -170,3 +170,65 @@ async def test_discord_embed_message_batching_strict_under_6000() -> None:
         dispatched_embeds.extend(call_embeds)
 
     assert len(dispatched_embeds) == len(embeds)
+
+
+def test_parse_command_args_less_and_more_than_six() -> None:
+    from discord_cog import _parse_command_args
+
+    # 2 inputs (< 6)
+    inputs_2, draft_2, recent_2 = _parse_command_args(["105829141", "89410294"])
+    assert inputs_2 == ["105829141", "89410294"]
+    assert draft_2 is False
+    assert recent_2 == 200
+
+    # 8 inputs (> 6) with --draft flag
+    eight_args = [f"player_{i}" for i in range(8)] + ["--draft"]
+    inputs_8, draft_8, recent_8 = _parse_command_args(eight_args)
+    assert len(inputs_8) == 8
+    assert draft_8 is True
+    assert recent_8 == 200
+
+    # 1 input (< 6) with --recent 50
+    inputs_1, draft_1, recent_1 = _parse_command_args(["SoloPlayer", "--recent", "50"])
+    assert inputs_1 == ["SoloPlayer"]
+    assert draft_1 is False
+    assert recent_1 == 50
+
+
+@pytest.mark.skipif(not HAS_DISCORD, reason="discord.py is required for this test")
+def test_discord_embeds_flexible_roster_counts() -> None:
+    from models import PlayerProfile
+
+    cog = DeadlockScoutCog(bot=None)
+
+    # 1. Test single player (< 6)
+    single_player = [
+        PlayerProfile(account_id=1, personaname="SoloCarry", pp_score=5500, rank_name="Oracle", heroes=[])
+    ]
+    report_1 = ExecutiveScoutingReport(
+        team_name="Solo Team",
+        opponents=single_player,
+        ranked_characters=[],
+        target_bans=[],
+    )
+    embeds_1 = cog.build_report_embeds(report_1)
+    assert "**Opponents Scouted:** 1" in embeds_1[0].description
+    assert len(embeds_1[-1].fields) == 1
+
+    # 2. Test large roster with 25 players (> 6), ensuring embed splitting stays under 25-field limit
+    large_roster = [
+        PlayerProfile(account_id=i, personaname=f"Player_{i}", pp_score=5000 + i, rank_name="Oracle", heroes=[])
+        for i in range(1, 26)
+    ]
+    report_large = ExecutiveScoutingReport(
+        team_name="Large Team",
+        opponents=large_roster,
+        ranked_characters=[],
+        target_bans=[],
+    )
+    embeds_large = cog.build_report_embeds(report_large)
+    assert "**Opponents Scouted:** 25" in embeds_large[0].description
+    # Because there are 25 players and we split at 20 fields, there should be multiple roster embeds
+    for emb in embeds_large:
+        assert len(emb.fields) <= 25, f"Embed has {len(emb.fields)} fields (limit 25)"
+

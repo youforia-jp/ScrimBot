@@ -223,25 +223,32 @@ def render_report(report: ExecutiveScoutingReport) -> None:
 
 
 def prompt_for_inputs() -> list[str]:
-    """Interactively prompt user for 6 opponent profile URLs or Steam32 IDs."""
+    """Interactively prompt user for opponent profile URLs, usernames, or Steam32 IDs."""
     console.print(
         Panel(
             "[bold cyan]Deadlock Collegiate Scrim Scouting Assistant[/bold cyan]\n"
-            "Please provide 6 opponent Steam32 Account IDs or Profile URLs\n"
-            "(e.g., https://statlocker.gg/profile/123456789 or steamcommunity profile URLs).",
+            "Please provide opponent Steam32 Account IDs, Profile URLs, or Steam usernames.\n"
+            "You may enter any number of opponents (press Enter on an empty line when finished).",
             box=box.ROUNDED,
         )
     )
 
     inputs: list[str] = []
-    for i in range(1, 7):
-        while True:
-            val = Prompt.ask(f"[bold green]Opponent #{i}[/bold green]").strip()
-            if not val:
-                console.print("[red]Input cannot be empty. Please enter an ID or URL.[/red]")
-                continue
-            inputs.append(val)
-            break
+    idx = 1
+    while True:
+        prompt_label = (
+            f"[bold green]Opponent #{idx}[/bold green]"
+            if idx == 1
+            else f"[bold green]Opponent #{idx}[/bold green] [dim](press Enter if finished)[/dim]"
+        )
+        val = Prompt.ask(prompt_label, default="").strip()
+        if not val:
+            if inputs:
+                break
+            console.print("[red]Input cannot be empty. Please enter at least 1 opponent ID, URL, or username.[/red]")
+            continue
+        inputs.append(val)
+        idx += 1
 
     return inputs
 
@@ -253,12 +260,12 @@ def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "inputs",
         nargs="*",
-        help="Opponent Steam32 IDs or profile URLs (up to 6).",
+        help="Opponent Steam32 IDs, profile URLs, or usernames (any count).",
     )
     parser.add_argument(
         "-o", "--opponents",
         nargs="+",
-        help="List of opponent Steam32 IDs or URLs.",
+        help="List of opponent Steam32 IDs, URLs, or usernames (any count).",
     )
     parser.add_argument(
         "-f", "--file",
@@ -283,7 +290,7 @@ def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "-u", "--usernames",
         nargs="+",
-        help="Opponent Steam usernames to automatically resolve to Statlocker IDs and scout.",
+        help="Opponent Steam usernames to automatically resolve to Statlocker IDs and scout (any count).",
     )
     parser.add_argument(
         "-m", "--mock",
@@ -328,10 +335,14 @@ async def async_main(args: argparse.Namespace) -> int:
     if not raw_inputs:
         raw_inputs = prompt_for_inputs()
 
-    # Validate that we have at least 1 and warn if not 6
+    # Validate that we have at least 1 input
+    if not raw_inputs:
+        console.print("[bold red]Error:[/bold red] At least 1 opponent input is required.")
+        return 1
+
     if len(raw_inputs) != 6:
         console.print(
-            f"[bold yellow]Notice:[/bold yellow] Received {len(raw_inputs)} opponent inputs. Standard Deadlock team roster is 6 players."
+            f"[bold cyan]Info:[/bold cyan] Scouting {len(raw_inputs)} opponent(s) (Standard Deadlock team roster is 6 players)."
         )
 
     with console.status("[bold green]Resolving opponents and scouting target bans...[/bold green]", spinner="dots"):

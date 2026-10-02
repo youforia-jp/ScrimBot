@@ -27,7 +27,7 @@ async def run_scouting(
     Execute full competitive scouting workflow for an opponent roster.
 
     Args:
-        opponent_inputs: 6 player profile URLs, Steam vanity links, or Steam32 IDs.
+        opponent_inputs: Player profile URLs, Steam vanity links, Steam32 IDs, or usernames (any count).
         team_name: Collegiate team name.
         create_draft: Whether to create a public Statlocker draft lobby.
         mock_mode: If True, uses realistic collegiate mock data without external network calls.
@@ -123,9 +123,11 @@ async def run_scouting(
     # 3. Analyze each opponent player
     roster: list[PlayerProfile] = []
     for acc_id in account_ids:
-        sl_profile = statlocker_data.get(acc_id, {})
-        pp_score = int(sl_profile.get("ppScore", settings.default_pp_score))
-        est_rank = int(sl_profile.get("estimatedRankNumber", settings.default_rank_number))
+        sl_profile = statlocker_data.get(acc_id, {}) or {}
+        raw_pp = sl_profile.get("ppScore")
+        pp_score = int(raw_pp) if raw_pp is not None else settings.default_pp_score
+        raw_rank = sl_profile.get("estimatedRankNumber")
+        est_rank = int(raw_rank) if raw_rank is not None else settings.default_rank_number
         persona = persona_names.get(acc_id, "")
         records = hero_stats_data.get(acc_id, [])
 
@@ -194,7 +196,7 @@ async def scout_by_usernames(
     Get Statlocker IDs based on player usernames alone, and then auto-scout the roster.
 
     Args:
-        usernames: 6 player usernames (e.g. ['GreenGobbler', 'BrickMac', ...]).
+        usernames: Sequence of player usernames (any count, e.g. ['GreenGobbler', 'BrickMac', ...]).
         team_name: Collegiate team name.
         create_draft: Whether to create a Statlocker draft room.
         max_recent_matches: Match window (default: 200).

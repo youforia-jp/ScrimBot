@@ -8,7 +8,7 @@ To use:
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, Sequence
 
 try:
     import discord
@@ -26,6 +26,46 @@ from scout import run_scouting
 from models import ExecutiveScoutingReport
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_command_args(args: Sequence[str]) -> tuple[list[str], bool, int]:
+    """Parse player inputs, draft flag, and recent match limits from command arguments."""
+    player_inputs: list[str] = []
+    create_draft = False
+    recent_matches = settings.max_recent_matches
+
+    skip_next = False
+    for i, arg in enumerate(args):
+        if skip_next:
+            skip_next = False
+            continue
+
+        arg_lower = arg.lower().strip()
+        if arg_lower in ("--draft", "-d", "--create-draft", "draft=true", "create_draft=true", "draft"):
+            create_draft = True
+        elif arg_lower in ("--recent", "-r", "--matches"):
+            if i + 1 < len(args):
+                try:
+                    recent_matches = int(args[i + 1])
+                    skip_next = True
+                except ValueError:
+                    pass
+        elif arg_lower.startswith("--recent=") or arg_lower.startswith("-r="):
+            try:
+                recent_matches = int(arg.split("=", 1)[1])
+            except ValueError:
+                pass
+        elif arg_lower.startswith("--matches="):
+            try:
+                recent_matches = int(arg.split("=", 1)[1])
+            except ValueError:
+                pass
+        else:
+            cleaned = arg.strip().strip(",;")
+            if cleaned:
+                player_inputs.append(cleaned)
+
+    return player_inputs, create_draft, recent_matches
 
 
 class DeadlockScoutCog(commands.Cog):
@@ -85,6 +125,7 @@ class DeadlockScoutCog(commands.Cog):
             title="🎯 Collegiate Deadlock Scouting Report",
             description=(
                 f"**Team:** {report.team_name}\n"
+                f"**Opponents Scouted:** {len(report.opponents)}\n"
                 f"**Scouted at:** {report.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
                 f"**Window:** {report.sample_window}"
             ),
@@ -108,11 +149,30 @@ class DeadlockScoutCog(commands.Cog):
             if r.account_id and r.search_query != str(r.account_id)
         ]
         if resolved_usernames:
-            embed.add_field(
-                name="🔍 Resolved Statlocker Opponents",
-                value="\n".join(resolved_usernames)[:1024],
-                inline=False,
-            )
+            curr_lines: list[str] = []
+            curr_len = 0
+            field_num = 1
+            for u_line in resolved_usernames:
+                if curr_len + len(u_line) + 1 > 950:
+                    field_title = (
+                        "🔍 Resolved Statlocker Opponents"
+                        if field_num == 1
+                        else f"🔍 Resolved Opponents (Part {field_num})"
+                    )
+                    embed.add_field(name=field_title, value="\n".join(curr_lines), inline=False)
+                    curr_lines = [u_line]
+                    curr_len = len(u_line)
+                    field_num += 1
+                else:
+                    curr_lines.append(u_line)
+                    curr_len += len(u_line) + 1
+            if curr_lines:
+                field_title = (
+                    "🔍 Resolved Statlocker Opponents"
+                    if field_num == 1
+                    else f"🔍 Resolved Opponents (Part {field_num})"
+                )
+                embed.add_field(name=field_title, value="\n".join(curr_lines), inline=False)
 
         # Ranked Character Threats Section (All characters, individual pilot scores)
         ranked_chars = report.ranked_characters
@@ -179,11 +239,12 @@ class DeadlockScoutCog(commands.Cog):
                     inline=False,
                 )
 
-        # Roster Breakdown Embed (Clean dedicated embed)
-        roster_embed = discord.Embed(
-            title="👥 Opponent Roster & Comfort Picks",
+        # Roster Breakdown Embed (Clean dedicated embed, split if > 20 fields to stay well under 25-field limit)
+        current_roster_embed = discord.Embed(
+            title=f"👥 Opponent Roster & Comfort Picks ({len(report.opponents)} Players)",
             color=discord.Color.dark_grey(),
         )
+        embeds.append(current_roster_embed)
 
         for opp in report.opponents:
             comfort_str = "None recorded"
@@ -198,13 +259,21 @@ class DeadlockScoutCog(commands.Cog):
                 hazard_note = f"\n⚠️ **ONE-TRICK:** {opp.one_trick_hero} ({opp.one_trick_pct*100:.1f}% of games)"
 
             field_val = f"**PP:** {opp.pp_score:,}\n{comfort_str}{hazard_note}"
-            roster_embed.add_field(
-                name=f"{opp.display_name} ({opp.rank_name})",
+            field_name = f"{opp.display_name} ({opp.rank_name})"
+
+            if len(current_roster_embed.fields) >= 20 or (self.get_embed_total_chars(current_roster_embed) + len(field_name) + len(field_val) > 4000):
+                current_roster_embed = discord.Embed(
+                    title=f"👥 Opponent Roster & Comfort Picks (Cont. Part {len(embeds) + 1})",
+                    color=discord.Color.dark_grey(),
+                )
+                embeds.append(current_roster_embed)
+
+            current_roster_embed.add_field(
+                name=field_name[:256],
                 value=field_val[:1024],
                 inline=True,
             )
 
-        embeds.append(roster_embed)
         return embeds
 
     if HAS_DISCORD:
@@ -212,18 +281,18 @@ class DeadlockScoutCog(commands.Cog):
         async def prefix_scout(
             self,
             ctx: commands.Context,
-            p1: str,
-            p2: str,
-            p3: str,
-            p4: str,
-            p5: str,
-            p6: str,
-            create_draft: bool = False,
-            recent_matches: int = 200,
+            *args: str,
         ) -> None:
-            """Scout a 6-player opponent roster via prefix command: !scout id1 id2 id3 id4 id5 id6 [create_draft] [recent_matches]"""
-            inputs = [p1, p2, p3, p4, p5, p6]
-            await ctx.send("🔍 *Scouting Deadlock opponents and calculating target bans...*")
+            """Scout opponents via prefix command: !scout id1 [id2] ... [--draft] [--recent 200]"""
+            inputs, create_draft, recent_matches = _parse_command_args(args)
+            if not inputs:
+                await ctx.send(
+                    "❌ Please provide at least 1 opponent ID, profile URL, or username.\n"
+                    "**Usage:** `!scout <opponent1> [opponent2] ... [--draft] [--recent 200]`"
+                )
+                return
+
+            await ctx.send(f"🔍 *Scouting {len(inputs)} Deadlock opponent(s) and calculating target bans...*")
             try:
                 report = await run_scouting(
                     opponent_inputs=inputs,
@@ -236,9 +305,9 @@ class DeadlockScoutCog(commands.Cog):
             except Exception as exc:
                 await ctx.send(f"❌ **Scouting error:** {exc}")
 
-        @app_commands.command(name="scout", description="Scout 6 Deadlock opponents and calculate ban priorities.")
+        @app_commands.command(name="scout", description="Scout Deadlock opponents (any count) and calculate ban priorities.")
         @app_commands.describe(
-            opponents="6 comma- or space-separated Steam32 IDs, URLs, or player usernames",
+            opponents="Space- or comma-separated Steam32 IDs, URLs, or player usernames (any number of players)",
             create_draft="Whether to create a public Statlocker draft room",
             recent_matches="Max recent games per player (default: 200, 0 for all-time)",
         )
@@ -251,9 +320,9 @@ class DeadlockScoutCog(commands.Cog):
         ) -> None:
             """Slash command for Deadlock scouting by IDs, URLs, or usernames."""
             raw_inputs = [s.strip() for s in opponents.replace(",", " ").split() if s.strip()]
-            if len(raw_inputs) != 6:
+            if not raw_inputs:
                 await interaction.response.send_message(
-                    f"⚠️ Please provide exactly 6 opponent inputs (received {len(raw_inputs)}).",
+                    "⚠️ Please provide at least 1 opponent input (ID, URL, or username).",
                     ephemeral=True,
                 )
                 return
@@ -273,10 +342,10 @@ class DeadlockScoutCog(commands.Cog):
 
         @app_commands.command(
             name="scout_usernames",
-            description="Auto-resolve 6 opponent player usernames to Statlocker IDs and scout them.",
+            description="Auto-resolve opponent usernames (any count) to Statlocker IDs and scout them.",
         )
         @app_commands.describe(
-            usernames="6 comma- or space-separated player usernames (e.g. GreenGobbler, BrickMac, EczeMonk, ...)",
+            usernames="Space- or comma-separated player usernames (any number of players)",
             create_draft="Whether to create a public Statlocker draft room",
             recent_matches="Max recent games per player (default: 200, 0 for all-time)",
         )
@@ -289,9 +358,9 @@ class DeadlockScoutCog(commands.Cog):
         ) -> None:
             """Slash command for auto-scouting by usernames."""
             raw_inputs = [s.strip() for s in usernames.replace(",", " ").split() if s.strip()]
-            if len(raw_inputs) != 6:
+            if not raw_inputs:
                 await interaction.response.send_message(
-                    f"⚠️ Please provide exactly 6 opponent usernames (received {len(raw_inputs)}).",
+                    "⚠️ Please provide at least 1 opponent username.",
                     ephemeral=True,
                 )
                 return
@@ -313,18 +382,18 @@ class DeadlockScoutCog(commands.Cog):
         async def prefix_scout_usernames(
             self,
             ctx: commands.Context,
-            p1: str,
-            p2: str,
-            p3: str,
-            p4: str,
-            p5: str,
-            p6: str,
-            create_draft: bool = False,
-            recent_matches: int = 200,
+            *args: str,
         ) -> None:
-            """Scout a 6-player roster by usernames: !scout_usernames name1 name2 name3 name4 name5 name6"""
-            inputs = [p1, p2, p3, p4, p5, p6]
-            await ctx.send("🔍 *Resolving opponent usernames to Statlocker IDs and scouting...*")
+            """Scout opponent roster by usernames: !scout_usernames name1 [name2] ... [--draft] [--recent 200]"""
+            inputs, create_draft, recent_matches = _parse_command_args(args)
+            if not inputs:
+                await ctx.send(
+                    "❌ Please provide at least 1 opponent username.\n"
+                    "**Usage:** `!scout_usernames <name1> [name2] ... [--draft] [--recent 200]`"
+                )
+                return
+
+            await ctx.send(f"🔍 *Resolving {len(inputs)} opponent username(s) to Statlocker IDs and scouting...*")
             try:
                 report = await run_scouting(
                     opponent_inputs=inputs,

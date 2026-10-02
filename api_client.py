@@ -136,23 +136,21 @@ class StatlockerClient:
                         for item in data:
                             acc_id = item.get("accountId") or item.get("account_id") or item.get("id")
                             if acc_id is not None:
+                                pp_val = item.get("ppScore") if item.get("ppScore") is not None else item.get("pp_score")
+                                rank_val = item.get("estimatedRankNumber") if item.get("estimatedRankNumber") is not None else item.get("estimated_rank_number")
                                 results[int(acc_id)] = {
-                                    "ppScore": item.get("ppScore", item.get("pp_score", settings.default_pp_score)),
-                                    "estimatedRankNumber": item.get(
-                                        "estimatedRankNumber",
-                                        item.get("estimated_rank_number", settings.default_rank_number),
-                                    ),
+                                    "ppScore": int(pp_val) if pp_val is not None else settings.default_pp_score,
+                                    "estimatedRankNumber": int(rank_val) if rank_val is not None else settings.default_rank_number,
                                 }
                     elif isinstance(data, dict):
                         for key, item in data.items():
                             try:
                                 acc_id = int(key)
+                                pp_val = item.get("ppScore") if item.get("ppScore") is not None else item.get("pp_score")
+                                rank_val = item.get("estimatedRankNumber") if item.get("estimatedRankNumber") is not None else item.get("estimated_rank_number")
                                 results[acc_id] = {
-                                    "ppScore": item.get("ppScore", item.get("pp_score", settings.default_pp_score)),
-                                    "estimatedRankNumber": item.get(
-                                        "estimatedRankNumber",
-                                        item.get("estimated_rank_number", settings.default_rank_number),
-                                    ),
+                                    "ppScore": int(pp_val) if pp_val is not None else settings.default_pp_score,
+                                    "estimatedRankNumber": int(rank_val) if rank_val is not None else settings.default_rank_number,
                                 }
                             except (ValueError, TypeError):
                                 pass

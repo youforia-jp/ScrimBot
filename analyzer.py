@@ -91,12 +91,18 @@ def calculate_threat_score(
     pp_score: int,
     min_matches: int = settings.min_matches_played,
     clamp_negative: bool = True,
+    match_exponent: float = settings.match_weight_exponent,
+    win_rate_baseline: float = settings.win_rate_threat_baseline,
 ) -> float:
     """
     Calculate the Ban Threat Score for a hero played by a specific opponent.
 
+    Matches are weighted linearly (or via match_weight_exponent) so that high-volume
+    comfort picks and signature mains carry substantially greater threat weight than
+    low-sample flukes.
+
     Formula:
-        Threat Score = sqrt(Matches Played) * (Win Rate - 0.45) * (1 + ppScore / 10000) * 10
+        Threat Score = (Matches Played ^ match_exponent) * (Win Rate - win_rate_baseline) * (1 + ppScore / 10000)
 
     Filters:
         - If matches_played < min_matches (default: 5), threat score is 0.0.
@@ -106,7 +112,9 @@ def calculate_threat_score(
         return 0.0
 
     skill_multiplier = 1.0 + (pp_score / 10000.0)
-    score = math.sqrt(matches_played) * (win_rate - settings.win_rate_threat_baseline) * skill_multiplier * 10.0
+    match_factor = float(matches_played) ** match_exponent
+    win_rate_factor = win_rate - win_rate_baseline
+    score = match_factor * win_rate_factor * skill_multiplier
 
     if clamp_negative:
         return max(0.0, score)

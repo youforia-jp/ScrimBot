@@ -53,9 +53,10 @@ class Settings:
     http_timeout: float = float(os.getenv("HTTP_TIMEOUT", "10.0"))
 
     # Scoring & Thresholds
-    min_matches_played: int = 5
-    one_trick_threshold: float = 0.55  # 55% of total games
-    win_rate_threat_baseline: float = 0.45
+    min_matches_played: int = int(os.getenv("MIN_MATCHES_PLAYED", "5"))
+    one_trick_threshold: float = float(os.getenv("ONE_TRICK_THRESHOLD", "0.55"))  # 55% of total games
+    win_rate_threat_baseline: float = float(os.getenv("WIN_RATE_THREAT_BASELINE", "0.30"))
+    match_weight_exponent: float = float(os.getenv("MATCH_WEIGHT_EXPONENT", "1.0"))
     max_recent_matches: int = int(os.getenv("MAX_RECENT_MATCHES", "200"))
 
 

@@ -14,12 +14,12 @@ from models import HeroStatsRecord, PlayerProfile
 
 def test_threat_score_exact_calculation() -> None:
     # Matches = 100, WR = 0.65, PP = 6000
-    # sqrt(100) = 10
-    # 0.65 - 0.45 = 0.20
+    # match_factor = 100^1.0 = 100
+    # 0.65 - 0.30 = 0.35
     # 1 + 6000 / 10000 = 1.6
-    # 10 * 0.20 * 1.6 * 10 = 32.0
+    # 100 * 0.35 * 1.6 = 56.0
     score = calculate_threat_score(matches_played=100, win_rate=0.65, pp_score=6000)
-    assert pytest.approx(score, rel=1e-4) == 32.0
+    assert pytest.approx(score, rel=1e-4) == 56.0
 
 
 def test_threat_score_min_matches_filter() -> None:
@@ -33,12 +33,25 @@ def test_threat_score_min_matches_filter() -> None:
 
 
 def test_threat_score_clamping() -> None:
-    # WR below baseline 0.45
-    score_clamped = calculate_threat_score(matches_played=20, win_rate=0.40, pp_score=5000, clamp_negative=True)
+    # WR below baseline 0.30
+    score_clamped = calculate_threat_score(matches_played=20, win_rate=0.25, pp_score=5000, clamp_negative=True)
     assert score_clamped == 0.0
 
-    score_unclamped = calculate_threat_score(matches_played=20, win_rate=0.40, pp_score=5000, clamp_negative=False)
+    score_unclamped = calculate_threat_score(matches_played=20, win_rate=0.25, pp_score=5000, clamp_negative=False)
     assert score_unclamped < 0.0
+
+
+def test_threat_score_heavy_match_weighting_over_winrate() -> None:
+    """Verify that high-volume comfort picks heavily out-rank low-sample flukes."""
+    # 60-game veteran pick with 50% win rate
+    high_match_score = calculate_threat_score(matches_played=60, win_rate=0.50, pp_score=5000)
+    # 10-game pick with 80% win rate
+    low_match_score = calculate_threat_score(matches_played=10, win_rate=0.80, pp_score=5000)
+
+    # 60 matches (18.0) must score significantly higher than 10 matches (7.5)
+    assert high_match_score > low_match_score
+    assert pytest.approx(high_match_score, rel=1e-3) == 18.0
+    assert pytest.approx(low_match_score, rel=1e-3) == 7.5
 
 
 def test_one_trick_detection_positive() -> None:

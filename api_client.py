@@ -82,7 +82,7 @@ class StatlockerClient:
         api_key: str | None = None,
         timeout: float = settings.http_timeout,
     ) -> None:
-        self.api_key = api_key or settings.statlocker_api_key
+        self.api_key = settings.statlocker_api_key if api_key is None else api_key
         self.timeout = timeout
         self.connected: bool = False
 

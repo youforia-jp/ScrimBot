@@ -10,7 +10,7 @@ from config import settings
 
 @pytest.mark.asyncio
 async def test_statlocker_missing_api_key_fallback() -> None:
-    client = StatlockerClient(api_key=None)
+    client = StatlockerClient(api_key="")
     account_ids = [105829141, 89410294]
     profiles = await client.fetch_profiles(account_ids)
 
@@ -65,7 +65,7 @@ async def test_statlocker_successful_response_parsing() -> None:
 
 @pytest.mark.asyncio
 async def test_statlocker_create_draft_lobby_missing_key() -> None:
-    client = StatlockerClient(api_key=None)
+    client = StatlockerClient(api_key="")
     resp = await client.create_draft_lobby([105829141, 89410294])
     assert resp.success is False
     assert "not configured" in resp.message
